@@ -69,16 +69,17 @@ class AlertSliderDialog(context: Context) : Dialog(context, R.style.alert_slider
             val f = context.resources.getFraction(R.fraction.alert_slider_dialog_y, 1, 1)
             val h = context.resources.getDimension(R.dimen.alert_slider_dialog_height).toInt()
             val hv = h + dialogView?.paddingTop!! + dialogView?.paddingBottom!!
+            val offset = 1 + context.resources.getFraction(R.fraction.alert_slider_mode_offset_y, 1, 1)
 
             x = context.resources.displayMetrics.widthPixels / 100
             y = ((context.resources.displayMetrics.heightPixels * f) - (hv * 0.5)).toInt()
 
             when (position) {
                 KeyHandler.POSITION_TOP -> {
-                    y -= (h * 1.5).toInt()
+                    y -= (h * offset).toInt()
                 }
                 KeyHandler.POSITION_BOTTOM -> {
-                    y += (h * 1.5).toInt()
+                    y += (h * offset).toInt()
                 }
                 else -> {}
             }
