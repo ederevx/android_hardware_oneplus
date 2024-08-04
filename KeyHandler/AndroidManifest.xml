@@ -25,7 +25,8 @@
         android:label="@string/device_settings_app_name"
         android:theme="@style/Theme.SubSettingsBase"
         android:defaultToDeviceProtectedStorage="true"
-        android:directBootAware="true">
+        android:directBootAware="true"
+        android:persistent="true">
 
         <receiver
             android:name="org.lineageos.settings.device.BootCompletedReceiver"
