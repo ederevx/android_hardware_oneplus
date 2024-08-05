@@ -76,6 +76,7 @@ class KeyHandler : Service() {
         notificationManager = getSystemService(NotificationManager::class.java)!!
         vibrator = getSystemService(Vibrator::class.java)!!
         sharedPreferences = PreferenceManager.getDefaultSharedPreferences(this)
+        PreferenceManager.setDefaultValues(this, R.xml.button_panel, true)
 
         registerReceiver(
             broadcastReceiver,
