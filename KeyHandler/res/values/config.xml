@@ -11,4 +11,13 @@
 
     <!-- This defines by what factor the dialog should be offset. -->
     <item name="alert_slider_mode_offset_y" type="fraction">50%</item>
+
+    <!-- This defines on what side the notification is to be shown 
+         by default.
+
+         0 -> DISABLED
+         1 -> SHOW_LEFT
+         2 -> SHOW_RIGHT -->
+    <integer name="alert_slider_notification_location">2</integer>
+
 </resources>
