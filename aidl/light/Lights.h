@@ -17,6 +17,13 @@ namespace android {
 namespace hardware {
 namespace light {
 
+enum light_states {
+    NOTIFICATION_STATE,
+    ATTENTION_STATE,
+    BATTERY_STATE,
+    MAX_STATES,
+};
+
 class Lights : public BnLights {
 public:
     Lights();
@@ -25,6 +32,7 @@ public:
     ndk::ScopedAStatus getLights(std::vector<HwLight> *_aidl_return) override;
 private:
     void setLED(const HwLightState& state);
+    void setLEDState(const HwLightState& state, light_states idx);
 
     std::vector<HwLight> mLights;
 
@@ -33,8 +41,7 @@ private:
     bool mWhiteLED;
 
     std::mutex mLEDMutex;
-    HwLightState mLastBatteryState;
-    HwLightState mLastNotificationState;
+    std::array<HwLightState, MAX_STATES> mLastLightStates;
 };
 
 } // namespace light
