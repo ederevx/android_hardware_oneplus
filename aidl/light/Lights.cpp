@@ -48,6 +48,7 @@ static const HwLight kBacklightHwLight = AutoHwLight(LightType::BACKLIGHT);
 static const HwLight kBatteryHwLight = AutoHwLight(LightType::BATTERY);
 static const HwLight kButtonsHwLight = AutoHwLight(LightType::BUTTONS);
 static const HwLight kNotificationHwLight = AutoHwLight(LightType::NOTIFICATIONS);
+static const HwLight kAttentionHwLight = AutoHwLight(LightType::ATTENTION);
 
 Lights::Lights() {
     for (auto& backlight : kAllBacklightPaths) {
@@ -73,10 +74,12 @@ Lights::Lights() {
 
     mLights.push_back(kBatteryHwLight);
     mLights.push_back(kNotificationHwLight);
+    mLights.push_back(kAttentionHwLight);
 }
 
 ndk::ScopedAStatus Lights::setLightState(int32_t id, const HwLightState& state) {
     LightType type = static_cast<LightType>(id);
+    light_states state_idx = MAX_STATES;
     switch (type) {
         case LightType::BACKLIGHT:
             if (!mBacklightPath.empty()) {
@@ -97,14 +100,17 @@ ndk::ScopedAStatus Lights::setLightState(int32_t id, const HwLightState& state) 
                 writeToFile(buttons, isLit(state.color));
             break;
         case LightType::BATTERY:
+            if (state_idx == MAX_STATES)
+                state_idx = BATTERY_STATE;
+            FALLTHROUGH_INTENDED;
         case LightType::NOTIFICATIONS:
-            mLEDMutex.lock();
-            if (type == LightType::BATTERY)
-                mLastBatteryState = state;
-            else
-                mLastNotificationState = state;
-            setLED(isLit(mLastBatteryState.color) ? mLastBatteryState : mLastNotificationState);
-            mLEDMutex.unlock();
+            if (state_idx == MAX_STATES)
+                state_idx = NOTIFICATION_STATE;
+            FALLTHROUGH_INTENDED;
+        case LightType::ATTENTION:
+            if (state_idx == MAX_STATES)
+                state_idx = ATTENTION_STATE;
+            setLEDState(state, state_idx);
             break;
         default:
             return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
@@ -125,6 +131,15 @@ void Lights::setLED(const HwLightState& state) {
     bool rc = true;
     argb_t color = colorToArgb(state.color);
     uint32_t blink = (state.flashOnMs != 0 && state.flashOffMs != 0);
+
+    // Disable current blinking
+    if (mWhiteLED) {
+        kLEDs[WHITE].setBreath(0);
+    } else {
+        kLEDs[RED].setBreath(0);
+        kLEDs[GREEN].setBreath(0);
+        kLEDs[BLUE].setBreath(0);
+    }
 
     switch (state.flashMode) {
         case FlashMode::HARDWARE:
@@ -153,6 +168,26 @@ void Lights::setLED(const HwLightState& state) {
             break;
     }
 
+    return;
+}
+
+void Lights::setLEDState(const HwLightState& state, light_states idx) {
+    HwLightState activeState = HwLightState();
+
+    mLEDMutex.lock();
+
+    if (idx < MAX_STATES)
+        mLastLightStates.at(idx) = state;
+
+    for (const auto& lightState : mLastLightStates) {
+        if (isLit(lightState.color)) {
+            activeState = lightState;
+            break;
+        }
+    }
+    setLED(activeState);
+
+    mLEDMutex.unlock();
     return;
 }
 
