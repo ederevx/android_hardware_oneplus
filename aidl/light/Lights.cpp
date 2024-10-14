@@ -79,7 +79,6 @@ Lights::Lights() {
 
 ndk::ScopedAStatus Lights::setLightState(int32_t id, const HwLightState& state) {
     LightType type = static_cast<LightType>(id);
-    light_states state_idx = MAX_STATES;
     switch (type) {
         case LightType::BACKLIGHT:
             if (!mBacklightPath.empty()) {
@@ -100,17 +99,9 @@ ndk::ScopedAStatus Lights::setLightState(int32_t id, const HwLightState& state) 
                 writeToFile(buttons, isLit(state.color));
             break;
         case LightType::BATTERY:
-            if (state_idx == MAX_STATES)
-                state_idx = BATTERY_STATE;
-            FALLTHROUGH_INTENDED;
         case LightType::NOTIFICATIONS:
-            if (state_idx == MAX_STATES)
-                state_idx = NOTIFICATION_STATE;
-            FALLTHROUGH_INTENDED;
         case LightType::ATTENTION:
-            if (state_idx == MAX_STATES)
-                state_idx = ATTENTION_STATE;
-            setLEDState(state, state_idx);
+            setLEDState(state, type);
             break;
         default:
             return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
@@ -171,13 +162,24 @@ void Lights::setLED(const HwLightState& state) {
     return;
 }
 
-void Lights::setLEDState(const HwLightState& state, light_states idx) {
+void Lights::setLEDState(const HwLightState& state, LightType type) {
     HwLightState activeState = HwLightState();
 
     mLEDMutex.lock();
 
-    if (idx < MAX_STATES)
-        mLastLightStates.at(idx) = state;
+    switch (type) {
+        case LightType::BATTERY:
+            mLastLightStates.at(BATTERY_STATE) = state;
+            break; 
+        case LightType::NOTIFICATIONS:
+            mLastLightStates.at(NOTIFICATIONS_STATE) = state;
+            break;
+        case LightType::ATTENTION:
+            mLastLightStates.at(ATTENTION_STATE) = state;
+            break;
+        default:
+            break;
+    }
 
     for (const auto& lightState : mLastLightStates) {
         if (isLit(lightState.color)) {
