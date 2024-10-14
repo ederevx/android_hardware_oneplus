@@ -18,8 +18,8 @@ namespace hardware {
 namespace light {
 
 enum light_states {
-    NOTIFICATION_STATE,
     ATTENTION_STATE,
+    NOTIFICATIONS_STATE,
     BATTERY_STATE,
     MAX_STATES,
 };
@@ -32,7 +32,7 @@ public:
     ndk::ScopedAStatus getLights(std::vector<HwLight> *_aidl_return) override;
 private:
     void setLED(const HwLightState& state);
-    void setLEDState(const HwLightState& state, light_states idx);
+    void setLEDState(const HwLightState& state, LightType type);
 
     std::vector<HwLight> mLights;
 
