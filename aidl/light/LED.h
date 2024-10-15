@@ -19,6 +19,7 @@ public:
 
     bool exists();
     bool setBreath(uint32_t value);
+    bool setTimed(uint32_t value, uint32_t onMs, uint32_t offMs, uint32_t idx);
     bool setBrightness(uint32_t value);
 private:
     std::string mBasePath;

@@ -133,11 +133,29 @@ void Lights::setLED(const HwLightState& state) {
     }
 
     switch (state.flashMode) {
-        case FlashMode::HARDWARE:
         case FlashMode::TIMED:
+            if (!mWhiteLED) {
+                rc = kLEDs[RED].setTimed(color.red, 
+                            state.flashOnMs, 
+                            state.flashOffMs,
+                            0);
+                rc &= kLEDs[GREEN].setTimed(color.green,
+                            state.flashOnMs, 
+                            state.flashOffMs,
+                            1);
+                rc &= kLEDs[BLUE].setTimed(color.blue,
+                            state.flashOnMs, 
+                            state.flashOffMs,
+                            2);
+                if (rc)
+                    break;
+            }
+            FALLTHROUGH_INTENDED;
+        case FlashMode::HARDWARE:
             if (mWhiteLED) {
                 rc = kLEDs[WHITE].setBreath(blink);
             } else {
+                rc = true;
                 if (!!color.red)
                     rc &= kLEDs[RED].setBreath(blink);
                 if (!!color.green)
