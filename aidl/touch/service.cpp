@@ -21,7 +21,9 @@ int main() {
 
     const std::string instanceTg = std::string(TouchscreenGesture::descriptor) + "/default";
     status = AServiceManager_addService(tg->asBinder().get(), instanceTg.c_str());
-    CHECK_EQ(status, STATUS_OK) << "Failed to add service " << instanceTg << " " << status;
+    if (status != STATUS_OK) {
+        LOG(WARNING) << "Can't register ITouchscreenGesture/default";
+    }
 
     ABinderProcess_joinThreadPool();
     return EXIT_FAILURE;  // should not reach
