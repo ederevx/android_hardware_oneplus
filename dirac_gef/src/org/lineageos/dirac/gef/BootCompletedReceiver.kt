@@ -19,29 +19,15 @@ package org.lineageos.dirac.gef
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.media.audiofx.AudioEffect
 import android.util.Log
-import com.android.internal.util.HexDump
-import java.util.UUID
 
 class BootCompletedReceiver : BroadcastReceiver() {
-    private val audioEffect = AudioEffect(AudioEffect.EFFECT_TYPE_NULL, EFFECT_TYPE_DIRAC_GEF, 0, 0)
-
     override fun onReceive(context: Context, intent: Intent) {
         Log.d(TAG, "Starting")
-        context.assets.open("dirac_gef_init.txt").reader().forEachLine {
-            val (param, value) = it.split("|")
-            audioEffect.setParameter(
-                HexDump.hexStringToByteArray(param),
-                HexDump.hexStringToByteArray(value),
-            )
-        }
-        audioEffect.enabled = true
+        DiracGefEffect.apply(context)
     }
 
     companion object {
         private const val TAG = "OnePlusDiracGef"
-
-        private val EFFECT_TYPE_DIRAC_GEF = UUID.fromString("3799d6d1-22c5-43c3-b3ec-d664cf8d2f0d")
     }
 }
