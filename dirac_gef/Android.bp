@@ -8,9 +8,16 @@ android_app {
     platform_apis: true,
     system_ext_specific: true,
 
-    // The settings screen reuses the platform Settings widgets.
-    defaults: ["SettingsLibDefaults"],
-    static_libs: ["androidx.appcompat_appcompat"],
+    // Only the two widgets and the theme the screen uses. Depending on the
+    // SettingsLib aggregate instead merged its whole resource set and classes,
+    // which inflated this app to 12 MB for a single switch.
+    static_libs: [
+        "SettingsLibCollapsingToolbarBaseActivity",
+        "SettingsLibMainSwitchPreference",
+        "SettingsLibSettingsTheme",
+        "androidx.appcompat_appcompat",
+        "androidx.preference_preference",
+    ],
 
     optimize: {
         proguard_flags_files: ["proguard.flags"],
