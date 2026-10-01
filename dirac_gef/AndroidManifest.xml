@@ -9,6 +9,8 @@
 
     <application
         android:label="OnePlusDiracGef"
+        android:icon="@drawable/ic_dirac"
+        android:theme="@style/Theme.SubSettingsBase"
         android:persistent="true"
         android:defaultToDeviceProtectedStorage="true"
         android:directBootAware="true">
@@ -20,5 +22,20 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </receiver>
+
+        <activity android:name="org.lineageos.dirac.gef.DiracSettingsActivity"
+                  android:exported="true"
+                  android:label="@string/dirac_title">
+            <intent-filter>
+                <action android:name="com.android.settings.action.IA_SETTINGS" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <meta-data
+                android:name="com.android.settings.category"
+                android:value="com.android.settings.category.ia.sound" />
+            <meta-data
+                android:name="com.android.settings.icon"
+                android:resource="@drawable/ic_dirac" />
+        </activity>
     </application>
 </manifest>

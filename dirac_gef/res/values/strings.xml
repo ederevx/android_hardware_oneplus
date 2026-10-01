@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="dirac_title">Dirac audio</string>
+    <string name="dirac_enable_title">Dirac audio</string>
+    <string name="dirac_enable_summary">Applies the OnePlus Dirac tuning to the built-in speaker and wired headset</string>
+</resources>

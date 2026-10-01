@@ -2,10 +2,15 @@ android_app {
     name: "OnePlusDiracGef",
 
     srcs: ["src/**/*.kt"],
+    resource_dirs: ["res"],
 
     certificate: "platform",
     platform_apis: true,
     system_ext_specific: true,
+
+    // The settings screen reuses the platform Settings widgets.
+    defaults: ["SettingsLibDefaults"],
+    static_libs: ["androidx.appcompat_appcompat"],
 
     optimize: {
         proguard_flags_files: ["proguard.flags"],

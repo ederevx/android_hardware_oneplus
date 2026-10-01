@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+    <com.android.settingslib.widget.MainSwitchPreference
+        android:key="dirac_enable"
+        android:title="@string/dirac_enable_title"
+        android:summary="@string/dirac_enable_summary"
+        android:persistent="false" />
+</PreferenceScreen>
