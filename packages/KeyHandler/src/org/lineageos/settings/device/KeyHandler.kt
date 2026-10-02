@@ -6,28 +6,36 @@
 package org.lineageos.settings.device
 
 import android.app.NotificationManager
-import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.content.SharedPreferences
+import android.hardware.input.InputManager
 import android.media.AudioManager
 import android.media.AudioSystem
-import android.os.IBinder
 import android.os.UEventObserver
 import android.os.VibrationAttributes
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.provider.Settings
-import androidx.preference.PreferenceManager
+import android.view.KeyEvent
+import com.android.internal.os.DeviceKeyHandler
 import java.util.concurrent.Executors
 
-class KeyHandler : Service() {
-    private lateinit var audioManager: AudioManager
-    private lateinit var notificationManager: NotificationManager
-    private lateinit var vibrator: Vibrator
-    private lateinit var sharedPreferences: SharedPreferences
+class KeyHandler(private val context: Context) : DeviceKeyHandler {
+    private val audioManager = context.getSystemService(AudioManager::class.java)!!
+    private val inputManager = context.getSystemService(InputManager::class.java)!!
+    private val notificationManager = context.getSystemService(NotificationManager::class.java)!!
+    private val vibrator = context.getSystemService(Vibrator::class.java)!!
+
+    private val packageContext =
+        context.createPackageContext(KeyHandler::class.java.getPackage()!!.name, 0)
+    private val sharedPreferences
+        get() =
+            packageContext.getSharedPreferences(
+                packageContext.packageName + "_preferences",
+                Context.MODE_PRIVATE or Context.MODE_MULTI_PROCESS,
+            )
 
     private val executorService = Executors.newSingleThreadExecutor()
 
@@ -72,18 +80,21 @@ class KeyHandler : Service() {
             }
         }
 
-    override fun onCreate() {
-        audioManager = getSystemService(AudioManager::class.java)!!
-        notificationManager = getSystemService(NotificationManager::class.java)!!
-        vibrator = getSystemService(Vibrator::class.java)!!
-        sharedPreferences = PreferenceManager.getDefaultSharedPreferences(this)
-
-        registerReceiver(broadcastReceiver, IntentFilter(AudioManager.STREAM_MUTE_CHANGED_ACTION))
+    init {
+        context.registerReceiver(broadcastReceiver, IntentFilter(AudioManager.STREAM_MUTE_CHANGED_ACTION))
         alertSliderEventObserver.startObserving("tri-state-key")
         alertSliderEventObserver.startObserving("tri_state_key")
     }
 
-    override fun onBind(intent: Intent?): IBinder? = null
+    override fun handleKeyEvent(event: KeyEvent): KeyEvent? {
+        if (event.action == KeyEvent.ACTION_DOWN &&
+            inputManager.getInputDevice(event.deviceId)?.name == TRI_STATE_DEVICE
+        ) {
+            // The slider position itself arrives through the uevent observer above.
+            return null
+        }
+        return event
+    }
 
     private fun vibrateIfNeeded(mode: Int) {
         when (mode) {
@@ -154,7 +165,7 @@ class KeyHandler : Service() {
     }
 
     private fun sendNotification(position: Int, mode: Int) {
-        sendBroadcast(
+        context.sendBroadcast(
             Intent(CHANGED_ACTION).apply {
                 putExtra("position", position)
                 putExtra("mode", mode)
@@ -167,6 +178,9 @@ class KeyHandler : Service() {
 
         // Intent actions
         const val CHANGED_ACTION = "org.lineageos.settings.UPDATE_SETTINGS"
+
+        // Tri-state input device
+        private const val TRI_STATE_DEVICE = "oplus,tri-state-key"
 
         // Slider key positions
         const val POSITION_TOP = 1
