@@ -35,6 +35,13 @@ object DiracQemEffect {
     const val OUTPUT_INTERNAL = 0
     const val OUTPUT_EXTERNAL = 1
 
+    /**
+     * Frames for the speaker name the sound device explicitly instead of the
+     * audio device, because the HAL's own output routing does not have to
+     * resolve AUDIO_DEVICE_OUT_SPEAKER to this exact sound device.
+     */
+    private const val SND_DEVICE_OUT_SPEAKER = 2
+
     private const val SCALAR_TONAL_BALANCE = 3
     private const val SCALAR_LOUDNESS = 4
 
@@ -111,7 +118,9 @@ object DiracQemEffect {
         val module = if (output == OUTPUT_EXTERNAL) QemProtocol.MODULE_EXTERNAL else QemProtocol.MODULE_INTERNAL
         val topo = if (output == OUTPUT_EXTERNAL) QemProtocol.TOPO_EXTERNAL else QemProtocol.TOPO_INTERNAL
         val devices = if (output == OUTPUT_EXTERNAL) QemProtocol.DEVICES_EXTERNAL else QemProtocol.DEVICES_INTERNAL
-        QemTransport(context).send(module, topo, devices, QemProtocol.PARAM_SCALAR_BASE + key, payload)
+        val sndDevId = if (output == OUTPUT_INTERNAL) SND_DEVICE_OUT_SPEAKER else 0
+        QemTransport(context).send(
+            module, topo, devices, QemProtocol.PARAM_SCALAR_BASE + key, payload, sndDevId)
     }
 
     fun apply(context: Context) {
@@ -137,7 +146,8 @@ object DiracQemEffect {
         val module = if (output == OUTPUT_EXTERNAL) QemProtocol.MODULE_EXTERNAL else QemProtocol.MODULE_INTERNAL
         val topo = if (output == OUTPUT_EXTERNAL) QemProtocol.TOPO_EXTERNAL else QemProtocol.TOPO_INTERNAL
         val devices = if (output == OUTPUT_EXTERNAL) QemProtocol.DEVICES_EXTERNAL else QemProtocol.DEVICES_INTERNAL
-        QemTransport(context).send(module, topo, devices, param, payload)
+        val sndDevId = if (output == OUTPUT_INTERNAL) SND_DEVICE_OUT_SPEAKER else 0
+        QemTransport(context).send(module, topo, devices, param, payload, sndDevId)
     }
 
     private const val MOVIE_TONAL_BALANCE = -1.0f
