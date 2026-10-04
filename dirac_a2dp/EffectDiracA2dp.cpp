@@ -26,18 +26,23 @@
 // The gate is driven by EFFECT_CMD_SET_DEVICE, which the framework sends
 // because the descriptor carries EFFECT_FLAG_DEVICE_IND.
 //
-// The curve itself is not implemented yet: process() currently writes the
-// input through untouched, so the effect can be attached and verified on its
-// own first. See the TODO in DiracA2dp_Process().
+// The voicing curve is a short minimum-phase biquad chain (DiracA2dpVoicing)
+// synthesised from the published Dirac HD Sound behaviour: magnitude and
+// impulse response correction toward a flat curve, with deeper controlled
+// bass, a clearer midrange, and a wider soundstage. No Dirac-licensed
+// coefficient data is used.
 
 #define LOG_TAG "dirac_a2dp"
 
 #include <errno.h>
+#include <stdio.h>
 #include <string.h>
 
 #include <log/log.h>
 
 #include <hardware/audio_effect.h>
+
+#include "DiracA2dpVoicing.h"
 
 // Effect UUID: 8f2b7c1e-4a5d-4e9b-9c3a-6d1f0b2e7a41
 static const effect_uuid_t kDiracA2dpUuid = {
@@ -56,6 +61,11 @@ typedef struct dirac_a2dp_object_s {
 
     // Updated by EFFECT_CMD_SET_DEVICE and read on every process() call.
     audio_devices_t device;
+
+    // Built from the stream configuration; ready only for the sample formats
+    // the voicing curve implements.
+    DiracA2dpVoicing voicing;
+    bool voicingReady;
 
     effect_config_t config;
 } dirac_a2dp_object_t;
@@ -185,17 +195,20 @@ static int32_t DiracA2dp_Process(effect_handle_t self,
 
     dirac_a2dp_object_t *context = &module->context;
 
-    DiracA2dp_PassThrough(context, inBuffer, outBuffer);
-
     // The device is read on every call rather than only when the command
     // arrives, so a device switch mid-stream takes effect on the next buffer.
-    if (!context->enabled || !audio_is_a2dp_out_device(context->device)) {
+    if (!context->enabled || !audio_is_a2dp_out_device(context->device) ||
+        !context->voicingReady) {
+        DiracA2dp_PassThrough(context, inBuffer, outBuffer);
         return 0;
     }
 
-    // TODO: apply the voicing curve here. It has to be derived rather than
-    // copied: the curve is fitted from measurements of the stock output, so no
-    // Dirac-licensed data is embedded in this library.
+    context->voicing.Process(
+            inBuffer->raw, outBuffer->raw, outBuffer->frameCount,
+            static_cast<unsigned>(
+                    audio_channel_count_from_out_mask(context->config.inputCfg.channels)),
+            static_cast<audio_format_t>(context->config.inputCfg.format),
+            context->config.outputCfg.accessMode == EFFECT_BUFFER_ACCESS_ACCUMULATE);
     return 0;
 }
 
@@ -266,6 +279,17 @@ static int32_t DiracA2dp_Command(effect_handle_t self,
         case EFFECT_CMD_SET_AUDIO_MODE:
         case EFFECT_CMD_SET_VOLUME:
             break;
+
+        case EFFECT_CMD_DUMP: {
+            if (pCmdData == nullptr || cmdSize != sizeof(uint32_t)) {
+                return -EINVAL;
+            }
+            const int fd = static_cast<int>(*reinterpret_cast<uint32_t *>(pCmdData));
+            dprintf(fd, "Dirac A2DP Voicing: state %u enabled %d device %#x a2dp %d\n",
+                    context->state, context->enabled, context->device,
+                    audio_is_a2dp_out_device(context->device));
+            break;
+        }
 
         case EFFECT_CMD_GET_PARAM: {
             if (pCmdData == nullptr || replySize == nullptr || pReplyData == nullptr ||
@@ -388,6 +412,14 @@ static int DiracA2dp_Configure(dirac_a2dp_module_t *module, const effect_config_
     memcpy(&context->config, config, sizeof(effect_config_t));
     context->configured = true;
     context->state = DIRAC_A2DP_STATE_INITIALIZED;
+
+    const audio_format_t format = static_cast<audio_format_t>(config->inputCfg.format);
+    const unsigned channelCount =
+            static_cast<unsigned>(audio_channel_count_from_out_mask(config->inputCfg.channels));
+    context->voicingReady =
+            (format == AUDIO_FORMAT_PCM_FLOAT || format == AUDIO_FORMAT_PCM_16_BIT) &&
+            context->voicing.Configure(config->inputCfg.samplingRate, channelCount);
+
     return 0;
 }
 
@@ -395,4 +427,6 @@ static void DiracA2dp_Reset(dirac_a2dp_object_t *context) {
     memset(&context->config, 0, sizeof(effect_config_t));
     context->configured = false;
     context->enabled = false;
+    context->voicingReady = false;
+    context->voicing.Reset();
 }
