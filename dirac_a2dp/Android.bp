@@ -14,7 +14,11 @@ cc_library_shared {
     vendor: true,
     relative_install_path: "soundfx",
 
-    srcs: ["EffectDiracA2dp.cpp"],
+    srcs: [
+        "Biquad.cpp",
+        "DiracA2dpVoicing.cpp",
+        "EffectDiracA2dp.cpp",
+    ],
 
     header_libs: [
         "libaudio_system_headers",
