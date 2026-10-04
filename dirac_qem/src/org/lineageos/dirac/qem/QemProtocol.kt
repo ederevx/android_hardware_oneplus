@@ -67,9 +67,13 @@ object QemProtocol {
     fun scalarPayload(key: Int, value: Float): ByteArray =
         ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).putInt(key).putFloat(value).array()
 
-    /** Base64 without wrapping or padding, matching the stock encoder. */
+    /**
+     * Base64 with '=' padding and no wrapping. The HAL decodes cal_data with
+     * the strict b64_pton(), which rejects any length that is not a multiple
+     * of four, so the padding is load-bearing rather than cosmetic.
+     */
     fun encode(data: ByteArray): String =
-        Base64.encodeToString(data, Base64.NO_WRAP or Base64.NO_PADDING)
+        Base64.encodeToString(data, Base64.NO_WRAP)
 
     /**
      * The HAL resolves cal_devid through its own output routing and overwrites
