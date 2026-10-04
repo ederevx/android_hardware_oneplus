@@ -15,12 +15,16 @@ import android.content.SharedPreferences
 import android.media.AudioManager
 import android.media.AudioSystem
 import android.os.IBinder
+import android.os.ServiceManager
 import android.os.UEventObserver
 import android.os.VibrationAttributes
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.provider.Settings
+import android.util.Log
 import androidx.preference.PreferenceManager
+import vendor.lineage.slider.IAlertSlider
+import vendor.lineage.slider.IAlertSliderCallback
 import java.util.concurrent.Executors
 
 class KeyHandler : Service() {
@@ -30,6 +34,37 @@ class KeyHandler : Service() {
     private lateinit var sharedPreferences: SharedPreferences
 
     private val executorService = Executors.newSingleThreadExecutor()
+
+    // Always-alive authority: the HAL is kept running by init and covers the
+    // window where this process is dead, so subscribe to it as well and take
+    // the atomic current-state snapshot it returns.
+    private val alertSliderCallback =
+        object : IAlertSliderCallback.Stub() {
+            override fun onStateChanged(state: Int) {
+                if (state in POSITION_TOP..POSITION_BOTTOM) handleMode(state)
+            }
+
+            override fun getInterfaceVersion(): Int = IAlertSliderCallback.VERSION
+
+            override fun getInterfaceHash(): String = IAlertSliderCallback.HASH
+        }
+
+    private fun subscribeAlertSlider() {
+        try {
+            val service =
+                IAlertSlider.Stub.asInterface(
+                    ServiceManager.waitForDeclaredService(ALERT_SLIDER_INSTANCE),
+                )
+            if (service == null) {
+                Log.w(TAG, "alert slider HAL not available")
+                return
+            }
+            val current = service.registerCallback(alertSliderCallback)
+            if (current in POSITION_TOP..POSITION_BOTTOM) handleMode(current)
+        } catch (e: Exception) {
+            Log.w(TAG, "failed to subscribe to the alert slider HAL", e)
+        }
+    }
 
     private var wasMuted = false
     private val broadcastReceiver =
@@ -81,6 +116,7 @@ class KeyHandler : Service() {
         registerReceiver(broadcastReceiver, IntentFilter(AudioManager.STREAM_MUTE_CHANGED_ACTION))
         alertSliderEventObserver.startObserving("tri-state-key")
         alertSliderEventObserver.startObserving("tri_state_key")
+        subscribeAlertSlider()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -172,6 +208,9 @@ class KeyHandler : Service() {
         const val POSITION_TOP = 1
         const val POSITION_MIDDLE = 2
         const val POSITION_BOTTOM = 3
+
+        // Always-alive slider HAL instance
+        private const val ALERT_SLIDER_INSTANCE = "vendor.lineage.slider.IAlertSlider/default"
 
         // Preference keys
         private const val ALERT_SLIDER_TOP_KEY = "config_top_position"
