@@ -26,14 +26,21 @@ import android.media.AudioManager
 class QemTransport(context: Context) {
     private val audioManager = context.getSystemService(AudioManager::class.java)
 
-    fun send(module: Int, topo: Int, devices: IntArray, param: Int, payload: ByteArray) {
+    fun send(
+        module: Int,
+        topo: Int,
+        devices: IntArray,
+        param: Int,
+        payload: ByteArray,
+        sndDevId: Int = 0,
+    ) {
         val data = QemProtocol.frame(module, param, payload)
         devices.forEach { device ->
             QemProtocol.APP_TYPES.forEach { appType ->
                 QemProtocol.PERSIST.forEach { persist ->
                     QemProtocol.SAMPLE_RATES.forEach { rate ->
                         audioManager.setParameters(
-                            QemProtocol.setString(topo, appType, persist, device, rate, data)
+                            QemProtocol.setString(topo, appType, persist, device, sndDevId, rate, data)
                         )
                     }
                 }
