@@ -81,6 +81,13 @@ class KeyHandler : Service() {
         registerReceiver(broadcastReceiver, IntentFilter(AudioManager.STREAM_MUTE_CHANGED_ACTION))
         alertSliderEventObserver.startObserving("tri-state-key")
         alertSliderEventObserver.startObserving("tri_state_key")
+
+        // This Service is started by BootCompletedReceiver on
+        // LOCKED_BOOT_COMPLETED, so onCreate is guaranteed to run at boot.
+        // Kernel uevents are never replayed and the driver's single boot-time
+        // emission is missed, so re-apply the position we observed last.
+        val position = sharedPreferences.getInt(LAST_POSITION_KEY, -1)
+        if (position != -1) handleMode(position, true)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -94,7 +101,9 @@ class KeyHandler : Service() {
         }
     }
 
-    private fun handleMode(position: Int) {
+    private fun handleMode(position: Int, firstRun: Boolean = false) {
+        sharedPreferences.edit().putInt(LAST_POSITION_KEY, position).apply()
+
         val muteMedia = sharedPreferences.getBoolean(MUTE_MEDIA_WITH_SILENT, false)
         val showDialog = sharedPreferences.getBoolean(SHOW_DIALOG, true)
 
@@ -136,10 +145,10 @@ class KeyHandler : Service() {
                     }
                 }
             }
-            if (showDialog) {
-                sendNotification(position, mode)
+            if (!firstRun) {
+                if (showDialog) sendNotification(position, mode)
+                vibrateIfNeeded(mode)
             }
-            vibrateIfNeeded(mode)
         }
     }
 
@@ -179,6 +188,7 @@ class KeyHandler : Service() {
         private const val ALERT_SLIDER_BOTTOM_KEY = "config_bottom_position"
         private const val MUTE_MEDIA_WITH_SILENT = "config_mute_media"
         private const val SHOW_DIALOG = "config_show_dialog"
+        private const val LAST_POSITION_KEY = "last_position"
 
         // ZEN constants
         private const val ZEN_OFFSET = 2
