@@ -71,16 +71,28 @@ object QemProtocol {
     fun encode(data: ByteArray): String =
         Base64.encodeToString(data, Base64.NO_WRAP or Base64.NO_PADDING)
 
+    /**
+     * The HAL resolves cal_devid through its own output routing and overwrites
+     * the cal_snddevid it just parsed, so a frame may carry either the audio
+     * device (resolved for us) or an explicit sound device, never both.
+     */
     fun setString(
         topo: Int,
         appType: Int,
         persist: Int,
         device: Int,
+        sndDevId: Int,
         sampleRate: Int,
         data: ByteArray,
-    ): String =
-        "cal_caltype=0;cal_topoid=$topo;cal_apptype=$appType;cal_persist=$persist;" +
-            "cal_devid=$device;cal_samplerate=$sampleRate;cal_data=${encode(data)}"
+    ): String {
+        val selectors = if (sndDevId > 0) {
+            "cal_devid=0;cal_snddevid=$sndDevId"
+        } else {
+            "cal_devid=$device"
+        }
+        return "cal_caltype=0;cal_topoid=$topo;cal_apptype=$appType;cal_persist=$persist;" +
+            "$selectors;cal_samplerate=$sampleRate;cal_data=${encode(data)}"
+    }
 
     private const val HEADER_SIZE = 12
 }
