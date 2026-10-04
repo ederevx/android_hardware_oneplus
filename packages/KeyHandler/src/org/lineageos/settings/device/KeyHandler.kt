@@ -43,10 +43,22 @@ class KeyHandler(private val context: Context) : DeviceKeyHandler {
     private val broadcastReceiver =
         object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
-                val stream = intent.getIntExtra(AudioManager.EXTRA_VOLUME_STREAM_TYPE, -1)
-                val state = intent.getBooleanExtra(AudioManager.EXTRA_STREAM_VOLUME_MUTED, false)
-                if (stream == AudioSystem.STREAM_MUSIC && !state) {
-                    wasMuted = false
+                when (intent.action) {
+                    AudioManager.STREAM_MUTE_CHANGED_ACTION -> {
+                        val stream = intent.getIntExtra(AudioManager.EXTRA_VOLUME_STREAM_TYPE, -1)
+                        val state = intent.getBooleanExtra(AudioManager.EXTRA_STREAM_VOLUME_MUTED, false)
+                        if (stream == AudioSystem.STREAM_MUSIC && !state) {
+                            wasMuted = false
+                        }
+                    }
+
+                    // Kernel uevents are never replayed, so the driver's single
+                    // boot-time emission is always missed. Re-apply the position
+                    // we observed last.
+                    Intent.ACTION_BOOT_COMPLETED -> {
+                        val position = sharedPreferences.getInt(LAST_POSITION_KEY, -1)
+                        if (position != -1) handleMode(position, true)
+                    }
                 }
             }
         }
@@ -81,7 +93,10 @@ class KeyHandler(private val context: Context) : DeviceKeyHandler {
         }
 
     init {
-        context.registerReceiver(broadcastReceiver, IntentFilter(AudioManager.STREAM_MUTE_CHANGED_ACTION))
+        context.registerReceiver(broadcastReceiver, IntentFilter().apply {
+            addAction(AudioManager.STREAM_MUTE_CHANGED_ACTION)
+            addAction(Intent.ACTION_BOOT_COMPLETED)
+        })
         alertSliderEventObserver.startObserving("tri-state-key")
         alertSliderEventObserver.startObserving("tri_state_key")
     }
@@ -105,7 +120,9 @@ class KeyHandler(private val context: Context) : DeviceKeyHandler {
         }
     }
 
-    private fun handleMode(position: Int) {
+    private fun handleMode(position: Int, firstRun: Boolean = false) {
+        sharedPreferences.edit().putInt(LAST_POSITION_KEY, position).apply()
+
         val muteMedia = sharedPreferences.getBoolean(MUTE_MEDIA_WITH_SILENT, false)
         val showDialog = sharedPreferences.getBoolean(SHOW_DIALOG, true)
 
@@ -147,10 +164,10 @@ class KeyHandler(private val context: Context) : DeviceKeyHandler {
                     }
                 }
             }
-            if (showDialog) {
-                sendNotification(position, mode)
+            if (!firstRun) {
+                if (showDialog) sendNotification(position, mode)
+                vibrateIfNeeded(mode)
             }
-            vibrateIfNeeded(mode)
         }
     }
 
@@ -193,6 +210,7 @@ class KeyHandler(private val context: Context) : DeviceKeyHandler {
         private const val ALERT_SLIDER_BOTTOM_KEY = "config_bottom_position"
         private const val MUTE_MEDIA_WITH_SILENT = "config_mute_media"
         private const val SHOW_DIALOG = "config_show_dialog"
+        private const val LAST_POSITION_KEY = "last_position"
 
         // ZEN constants
         private const val ZEN_OFFSET = 2
