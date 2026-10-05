@@ -1,5 +1,0 @@
-# Keep the preference fragment referenced from the manifest and XML.
--keep class org.lineageos.dirac.qem.DiracQemSettingsFragment { *; }
--keep class org.lineageos.dirac.qem.DiracQemSettingsActivity { *; }
--keep class org.lineageos.dirac.qem.BootCompletedReceiver { *; }
--keep class org.lineageos.dirac.qem.DiracStateReceiver { *; }
