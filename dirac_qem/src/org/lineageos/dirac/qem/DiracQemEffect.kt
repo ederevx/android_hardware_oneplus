@@ -150,6 +150,26 @@ object DiracQemEffect {
         QemTransport(context).send(module, topo, devices, param, payload, sndDevId)
     }
 
+    /**
+     * DEV PROBE: send a single Dirac calibration frame with an explicit
+     * topology (and app type) instead of the constants this app normally uses,
+     * so the topology the live audio stream registered can be identified from
+     * the audio HAL's own log. Touches no stored state: it neither writes a
+     * preference nor uses cal_persist=1, so a wrong candidate cannot leave a
+     * bad persistent calibration behind.
+     */
+    fun probeCal(context: Context, output: Int, topo: Int, appType: Int, rate: Int) {
+        val module =
+            if (output == OUTPUT_EXTERNAL) QemProtocol.MODULE_EXTERNAL else QemProtocol.MODULE_INTERNAL
+        val devices =
+            if (output == OUTPUT_EXTERNAL) QemProtocol.DEVICES_EXTERNAL else QemProtocol.DEVICES_INTERNAL
+        val sndDevId = if (output == OUTPUT_INTERNAL) SND_DEVICE_OUT_SPEAKER else 0
+        QemTransport(context).send(
+            module, topo, devices, QemProtocol.PARAM_ENABLE, QemProtocol.intPayload(1),
+            sndDevId, appTypes = intArrayOf(appType), persistValues = intArrayOf(0),
+            rates = intArrayOf(rate))
+    }
+
     private const val MOVIE_TONAL_BALANCE = -1.0f
     private const val DEFAULT_TONAL_BALANCE = 0.0f
     private const val BT_LOUDNESS = -1.0f
