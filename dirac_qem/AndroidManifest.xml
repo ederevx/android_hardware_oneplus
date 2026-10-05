@@ -35,6 +35,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- DEV PROBE only: lets the device operator trigger a topology walk
+             through `am broadcast`. Not part of the shipped feature. -->
+        <receiver android:name=".DiracProbeReceiver"
+                  android:exported="true">
+            <intent-filter>
+                <action android:name="org.lineageos.dirac.qem.PROBE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </receiver>
+
         <activity android:name=".DiracQemSettingsActivity"
                   android:exported="true"
                   android:label="@string/dirac_title">
