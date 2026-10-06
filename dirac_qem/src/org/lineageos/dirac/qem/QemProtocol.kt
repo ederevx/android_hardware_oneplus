@@ -36,6 +36,15 @@ object QemProtocol {
     val SAMPLE_RATES = intArrayOf(44100, 48000, 96000, 192000)
     val PERSIST = intArrayOf(0, 1)
 
+    /**
+     * libacdbloader's acdb_loader_adsp_set_audio_cal branches on this: 0 takes
+     * get_audio_copp_id (silent), 1 takes get_audio_popp_id, which logs every
+     * entry the kernel advertised over AUDIO_GET_RTAC_ADM_INFO. The dev probe
+     * uses 1 so the kernel's active RTAC ADM table is printed.
+     */
+    const val CAL_TYPE_COPP = 0
+    const val CAL_TYPE_POPP = 1
+
     const val PARAM_ENABLE = 0x12D01
     const val PARAM_HDSOUND_ENABLE = 0x12D03
     const val PARAM_HDSOUND_FILTERIDX = 0x12D04
@@ -88,13 +97,14 @@ object QemProtocol {
         sndDevId: Int,
         sampleRate: Int,
         data: ByteArray,
+        calType: Int = CAL_TYPE_COPP,
     ): String {
         val selectors = if (sndDevId > 0) {
             "cal_devid=0;cal_snddevid=$sndDevId"
         } else {
             "cal_devid=$device"
         }
-        return "cal_caltype=0;cal_topoid=$topo;cal_apptype=$appType;cal_persist=$persist;" +
+        return "cal_caltype=$calType;cal_topoid=$topo;cal_apptype=$appType;cal_persist=$persist;" +
             "$selectors;cal_samplerate=$sampleRate;cal_data=${encode(data)}"
     }
 

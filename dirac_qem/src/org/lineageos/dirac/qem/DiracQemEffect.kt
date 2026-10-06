@@ -157,17 +157,47 @@ object DiracQemEffect {
      * the audio HAL's own log. Touches no stored state: it neither writes a
      * preference nor uses cal_persist=1, so a wrong candidate cannot leave a
      * bad persistent calibration behind.
+     *
+     * calDevId is sent as cal_devid, which libacdbrtac matches against the
+     * acdb_dev_id of the kernel's active RTAC ADM devices; negative keeps the
+     * app's own device list and lets the HAL resolve the sound device (the
+     * normal QEM path). sndDevId is sent as cal_snddevid when positive; a
+     * negative value means "speaker sound device for internal output and no
+     * explicit cal_devid, none otherwise". calType selects the libacdbloader
+     * lookup: 1 makes get_audio_popp_id dump every RTAC ADM entry it was given,
+     * 0 uses the silent get_audio_copp_id.
      */
-    fun probeCal(context: Context, output: Int, topo: Int, appType: Int, rate: Int) {
+    fun probeCal(
+        context: Context,
+        output: Int,
+        topo: Int,
+        appType: Int,
+        rate: Int,
+        calType: Int = QemProtocol.CAL_TYPE_COPP,
+        calDevId: Int = -1,
+        sndDevId: Int = -1,
+        persist: Int = 0,
+        param: Int = QemProtocol.PARAM_ENABLE,
+    ) {
         val module =
             if (output == OUTPUT_EXTERNAL) QemProtocol.MODULE_EXTERNAL else QemProtocol.MODULE_INTERNAL
-        val devices =
-            if (output == OUTPUT_EXTERNAL) QemProtocol.DEVICES_EXTERNAL else QemProtocol.DEVICES_INTERNAL
-        val sndDevId = if (output == OUTPUT_INTERNAL) SND_DEVICE_OUT_SPEAKER else 0
+        val devices = if (calDevId >= 0) {
+            intArrayOf(calDevId)
+        } else if (output == OUTPUT_EXTERNAL) {
+            QemProtocol.DEVICES_EXTERNAL
+        } else {
+            QemProtocol.DEVICES_INTERNAL
+        }
+        val snd = when {
+            sndDevId >= 0 -> sndDevId
+            calDevId >= 0 -> 0
+            output == OUTPUT_INTERNAL -> SND_DEVICE_OUT_SPEAKER
+            else -> 0
+        }
         QemTransport(context).send(
-            module, topo, devices, QemProtocol.PARAM_ENABLE, QemProtocol.intPayload(1),
-            sndDevId, appTypes = intArrayOf(appType), persistValues = intArrayOf(0),
-            rates = intArrayOf(rate))
+            module, topo, devices, param, QemProtocol.intPayload(1),
+            snd, appTypes = intArrayOf(appType), persistValues = intArrayOf(persist),
+            rates = intArrayOf(rate), calTypes = intArrayOf(calType))
     }
 
     private const val MOVIE_TONAL_BALANCE = -1.0f
