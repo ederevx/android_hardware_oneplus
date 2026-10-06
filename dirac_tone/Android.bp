@@ -1,0 +1,17 @@
+// SPDX-FileCopyrightText: 2026 The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+
+android_app {
+    name: "DiracToneProbe",
+
+    srcs: ["src/**/*.kt"],
+
+    certificate: "platform",
+    sdk_version: "current",
+    min_sdk_version: "36",
+
+    // A diagnostic probe: keep it readable and free of resource plumbing.
+    optimize: {
+        enabled: false,
+    },
+}
