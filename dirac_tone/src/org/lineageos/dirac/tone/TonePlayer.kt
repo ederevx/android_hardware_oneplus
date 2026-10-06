@@ -16,7 +16,6 @@
 
 package org.lineageos.dirac.tone
 
-import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
@@ -26,11 +25,12 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
- * Holds one USAGE_MEDIA / CONTENT_TYPE_MUSIC stereo mixer stream open for as
- * long as it plays, so the ADM RX (path=0) copp the QEM frames target stays
- * registered on the device while they are sent.
+ * Holds one stereo mixer stream open for as long as it plays, so the ADM RX
+ * (path=0) copp the QEM frames target stays registered on the device while they
+ * are sent. The stream usage and preferred output come from [ToneRoute].
  */
 class TonePlayer(
+    private val route: ToneRoute,
     private val sampleRate: Int = DEFAULT_SAMPLE_RATE,
     private val frequencyHz: Double = DEFAULT_FREQUENCY_HZ,
     private val amplitude: Double = DEFAULT_AMPLITUDE,
@@ -54,10 +54,7 @@ class TonePlayer(
             MIN_BUFFER_FRAMES * CHANNELS,
         )
         val created = AudioTrack(
-            AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_MEDIA)
-                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                .build(),
+            route.audioAttributes(),
             AudioFormat.Builder()
                 .setEncoding(encoding)
                 .setSampleRate(sampleRate)
@@ -73,12 +70,17 @@ class TonePlayer(
             return false
         }
         track = created
+        route.device?.let { preferred ->
+            if (!created.setPreferredDevice(preferred)) {
+                Log.w(TAG, "preferred device rejected, staying on the default output")
+            }
+        }
         val block = buildToneBlock()
         playing = true
         writer = Thread { writeLoop(created, block) }.also { it.start() }
         created.play()
         Log.i(TAG, "tone up: session=${created.audioSessionId} rate=$sampleRate " +
-            "usage=USAGE_MEDIA freq=${frequencyHz}Hz buffer=$bufferSize")
+            "$route freq=${frequencyHz}Hz buffer=$bufferSize")
         return true
     }
 
