@@ -24,15 +24,18 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * Sends one DiRAC QEM calibration frame per (topology, acdb device id) through
+ * Sends one DiRAC QEM calibration frame per (topology, sound device) through
  * the public `AudioManager.setParameters` cal_* string, the same path the stock
  * se.dirac.acs app uses. Only MODIFY_AUDIO_SETTINGS, a normal permission, is
  * needed, so nothing here requires a privileged or persistent install.
  *
  * cal_caltype=1 selects libacdbloader's get_audio_popp_id, which dumps the
- * kernel's active RTAC ADM table and always logs the failed lookup; cal_devid
- * is the acdb device id the lookup matches against (15 speaker, 10 wired
- * headset), and cal_persist=0 keeps the sent calibration non-persistent.
+ * kernel's active RTAC ADM table and always logs the failed lookup, and
+ * cal_persist=0 keeps the sent calibration non-persistent. The target device is
+ * named with cal_snddevid, a HAL snd_device_t supplied by [ToneTarget];
+ * cal_devid stays 0, because the HAL parses a non-zero cal_devid as an
+ * audio_devices_t bitmask and then falls back to a built-in device, which
+ * pinned every frame to the speaker whatever was plugged in.
  */
 class QemFrames(context: Context) {
     private val audioManager: AudioManager =
@@ -41,15 +44,15 @@ class QemFrames(context: Context) {
     fun send(
         topo: Int,
         appType: Int,
-        acdbDevId: Int,
+        sndDevId: Int,
         sampleRate: Int,
         calType: Int = CAL_TYPE_POPP,
         persist: Int = 0,
         param: Int = PARAM_ENABLE,
     ) {
         val frame = frame(MODULE_INTERNAL, param, enablePayload())
-        val string = setString(topo, appType, persist, acdbDevId, sampleRate, frame, calType)
-        Log.i(TAG, "send cal_devid=$acdbDevId topo=0x${hex(topo)} apptype=$appType " +
+        val string = setString(topo, appType, persist, sndDevId, sampleRate, frame, calType)
+        Log.i(TAG, "send cal_snddev=$sndDevId topo=0x${hex(topo)} apptype=$appType " +
             "caltype=$calType persist=$persist rate=$sampleRate param=0x${hex(param)} " +
             "data=${frame.size}B")
         audioManager.setParameters(string)
@@ -77,13 +80,13 @@ class QemFrames(context: Context) {
         topo: Int,
         appType: Int,
         persist: Int,
-        acdbDevId: Int,
+        sndDevId: Int,
         sampleRate: Int,
         data: ByteArray,
         calType: Int,
     ): String =
         "cal_caltype=$calType;cal_topoid=$topo;cal_apptype=$appType;cal_persist=$persist;" +
-            "cal_devid=$acdbDevId;cal_samplerate=$sampleRate;" +
+            "cal_devid=0;cal_snddevid=$sndDevId;cal_samplerate=$sampleRate;" +
             "cal_data=${Base64.encodeToString(data, Base64.NO_WRAP)}"
 
     private fun hex(value: Int): String = Integer.toHexString(value)

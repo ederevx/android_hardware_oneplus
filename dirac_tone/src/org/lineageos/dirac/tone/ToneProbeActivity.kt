@@ -18,6 +18,7 @@ package org.lineageos.dirac.tone
 
 import android.app.Activity
 import android.content.Intent
+import android.media.AudioManager
 import android.os.Bundle
 import android.util.Log
 
@@ -25,25 +26,27 @@ import android.util.Log
  * DEV PROBE, not a shipped feature.
  *
  * Plays a USAGE_MEDIA tone so a mixer (path=0) ADM stream is open, then walks
- * the requested topologies against the requested acdb device ids and sends one
- * Dirac QEM frame per combination with cal_caltype=1, which makes libacdbloader
- * dump the kernel's active RTAC ADM table and log every failed lookup.
+ * the requested topologies against the requested HAL sound devices and sends
+ * one Dirac QEM frame per combination with cal_caltype=1, which makes
+ * libacdbloader dump the kernel's active RTAC ADM table and log every failed
+ * lookup.
  *
  * Trigger (topos and devids are the only extras worth changing):
  *
  *   adb shell am start -n org.lineageos.dirac.tone/.ToneProbeActivity \
  *       --ei duration 60 --es topos "0x10012d00,0x10012d01,0x10312" \
- *       --es devids "15,10"
+ *       --es devids "2,9"
  *
  * Extras: duration seconds (default 60), topos (default 0x10012d00,
- * 0x10012d01,0x10312), devids acdb ids (default 15,10), apptype (69936),
+ * 0x10012d01,0x10312), devids snd_device ids (2 speaker, 9 headphones; the
+ * default is the connected output resolved by [ToneTarget]), apptype (69936),
  * rate (48000), caltype (1), persist (0), param (0x12D01), delay ms before the
  * first frame (2000), gap ms between frames (1200), freq Hz (1000).
  */
 class ToneProbeActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val request = Request.from(intent)
+        val request = Request.from(intent, ToneTarget.of(getSystemService(AudioManager::class.java)))
         Log.i(TAG, "request: $request")
         Thread { run(request) }.start()
     }
@@ -59,14 +62,14 @@ class ToneProbeActivity : Activity() {
             Thread.sleep(request.delayMs)
             var index = 0
             for (topo in request.topos) {
-                for (devId in request.acdbDevIds) {
+                for (devId in request.sndDevIds) {
                     index++
-                    Log.i(TAG, "frame $index/${request.topos.size * request.acdbDevIds.size}" +
-                        " topo=0x${Integer.toHexString(topo)} acdb=$devId")
+                    Log.i(TAG, "frame $index/${request.topos.size * request.sndDevIds.size}" +
+                        " topo=0x${Integer.toHexString(topo)} snddev=$devId")
                     frames.send(
                         topo = topo,
                         appType = request.appType,
-                        acdbDevId = devId,
+                        sndDevId = devId,
                         sampleRate = request.sampleRate,
                         calType = request.calType,
                         persist = request.persist,
@@ -93,7 +96,7 @@ class ToneProbeActivity : Activity() {
         val delayMs: Long,
         val gapMs: Long,
         val topos: List<Int>,
-        val acdbDevIds: List<Int>,
+        val sndDevIds: List<Int>,
         val appType: Int,
         val sampleRate: Int,
         val calType: Int,
@@ -102,7 +105,7 @@ class ToneProbeActivity : Activity() {
         val frequencyHz: Int,
     ) {
         companion object {
-            fun from(intent: Intent?): Request {
+            fun from(intent: Intent?, defaultSndDevId: Int): Request {
                 val duration = intent?.getIntExtra(EXTRA_DURATION, DEFAULT_DURATION) ?: DEFAULT_DURATION
                 return Request(
                     durationMs = duration.coerceIn(MIN_DURATION, MAX_DURATION) * 1000L,
@@ -111,8 +114,8 @@ class ToneProbeActivity : Activity() {
                     gapMs = (intent?.getIntExtra(EXTRA_GAP, DEFAULT_GAP) ?: DEFAULT_GAP)
                         .coerceAtLeast(0).toLong(),
                     topos = parseInts(intent?.getStringExtra(EXTRA_TOPOS)).ifEmpty { DEFAULT_TOPOS },
-                    acdbDevIds = parseInts(intent?.getStringExtra(EXTRA_DEVIDS)).ifEmpty {
-                        DEFAULT_DEVIDS
+                    sndDevIds = parseInts(intent?.getStringExtra(EXTRA_DEVIDS)).ifEmpty {
+                        listOf(defaultSndDevId)
                     },
                     appType = intent?.getIntExtra(EXTRA_APPTYPE, DEFAULT_APPTYPE) ?: DEFAULT_APPTYPE,
                     sampleRate = intent?.getIntExtra(EXTRA_RATE, DEFAULT_RATE) ?: DEFAULT_RATE,
@@ -164,7 +167,6 @@ class ToneProbeActivity : Activity() {
             private const val DEFAULT_PERSIST = 0
             private const val DEFAULT_FREQ = 1000
             private val DEFAULT_TOPOS = listOf(0x10012D00, 0x10012D01, 0x10312)
-            private val DEFAULT_DEVIDS = listOf(15, 10)
         }
     }
 
