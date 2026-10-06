@@ -25,34 +25,38 @@ import android.util.Log
 /**
  * DEV PROBE, not a shipped feature.
  *
- * Plays a USAGE_MEDIA tone so a mixer (path=0) ADM stream is open, then walks
+ * Plays a stereo tone so a mixer (path=0) ADM stream is open, then walks
  * the requested topologies against the requested HAL sound devices and sends
  * one Dirac QEM frame per combination with cal_caltype=1, which makes
  * libacdbloader dump the kernel's active RTAC ADM table and log every failed
  * lookup.
  *
- * Trigger (topos and devids are the only extras worth changing):
+ * Trigger:
  *
  *   adb shell am start -n org.lineageos.dirac.tone/.ToneProbeActivity \
  *       --ei duration 60 --es topos "0x10012d00,0x10012d01,0x10312" \
- *       --es devids "2,9"
+ *       --es devids "2,9" --es device speaker --es usage media
  *
  * Extras: duration seconds (default 60), topos (default 0x10012d00,
  * 0x10012d01,0x10312), devids snd_device ids (2 speaker, 9 headphones; the
- * default is the connected output resolved by [ToneTarget]), apptype (69936),
+ * default is the connected output resolved by [ToneTarget]), device
+ * speaker|headset|earpiece and usage media|alarm select the stream's preferred
+ * output and usage (default is the media output), apptype (69936),
  * rate (48000), caltype (1), persist (0), param (0x12D01), delay ms before the
  * first frame (2000), gap ms between frames (1200), freq Hz (1000).
  */
 class ToneProbeActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val request = Request.from(intent, ToneTarget.of(getSystemService(AudioManager::class.java)))
+        val audioManager = getSystemService(AudioManager::class.java)
+        val request = Request.from(intent, ToneTarget.of(audioManager))
+        val route = ToneRoute.of(intent, audioManager)
         Log.i(TAG, "request: $request")
-        Thread { run(request) }.start()
+        Thread { run(request, route) }.start()
     }
 
-    private fun run(request: Request) {
-        val player = TonePlayer(frequencyHz = request.frequencyHz.toDouble())
+    private fun run(request: Request, route: ToneRoute) {
+        val player = TonePlayer(route, frequencyHz = request.frequencyHz.toDouble())
         val frames = QemFrames(this)
         try {
             if (!player.start()) {
