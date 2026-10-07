@@ -46,6 +46,13 @@ class EqPreviewPreference @JvmOverloads constructor(
 
     /** Redraws the curve from the current stored bands. */
     fun refresh() {
-        curve?.invalidate()
+        val view = curve
+        if (view != null) {
+            view.invalidate()
+        } else {
+            // The view handle was never attached (or was replaced without a
+            // rebind), so ask the list to bind this row again instead.
+            notifyChanged()
+        }
     }
 }

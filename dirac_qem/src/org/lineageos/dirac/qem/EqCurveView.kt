@@ -21,6 +21,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.util.AttributeSet
+import android.util.Log
 import android.view.View
 
 /**
@@ -28,8 +29,9 @@ import android.view.View
  * on a light grid, so the top of the Dirac page reads as a curve even when
  * every band sits at 0 dB.
  *
- * The bands are pulled from [bandProvider] on every redraw rather than pushed
- * into the view, so a redraw can never show a stale copy of the curve.
+ * The bands are read from the engine while drawing, from the same accessor the
+ * board reads, so the curve can never render a stale array or one that was
+ * never attached to this view instance.
  */
 class EqCurveView @JvmOverloads constructor(
     context: Context,
@@ -37,6 +39,7 @@ class EqCurveView @JvmOverloads constructor(
     defStyleAttr: Int = 0,
 ) : View(context, attrs, defStyleAttr) {
 
+    /** Test seam; when null the engine is read directly. */
     var bandProvider: (() -> FloatArray)? = null
 
     private var bands = FloatArray(DiracPresets.EQ_BANDS)
@@ -72,11 +75,20 @@ class EqCurveView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        bandProvider?.let { bands = it().copyOf(DiracPresets.EQ_BANDS) }
+
+        bands = (bandProvider?.invoke() ?: DiracQemEffect.currentBands(context))
+            .copyOf(DiracPresets.EQ_BANDS)
         val n = bands.size
+        Log.d(
+            TAG,
+            "curve bands n=$n first=${bands.firstOrNull()} last=${bands.lastOrNull()} " +
+                "provider=${bandProvider != null}",
+        )
         if (n < 2) {
+            // Never leave a bare baseline behind: it reads as a stray divider.
             return
         }
+
         val left = paddingLeft.toFloat()
         val right = (width - paddingRight).toFloat()
         val top = paddingTop.toFloat()
@@ -90,7 +102,7 @@ class EqCurveView @JvmOverloads constructor(
         fun x(i: Int) = left + spanX * i / (n - 1).toFloat()
         fun y(v: Float) = top + spanY * (6f - v.coerceIn(-6f, 6f)) / 12f
 
-        // Grid: the +6, 0 and -6 dB lines plus one line per band, so the flat
+        // Grid: the +6, 0 and -6 dB lines plus one line per band, so a flat
         // 0 dB curve is still legible.
         canvas.drawLine(left, top, right, top, gridPaint)
         canvas.drawLine(left, y(0f), right, y(0f), zeroPaint)
@@ -128,5 +140,9 @@ class EqCurveView @JvmOverloads constructor(
         val color = typed.getColor(0, 0)
         typed.recycle()
         return if (color != 0) color else 0xFF8AB4F8.toInt()
+    }
+
+    private companion object {
+        const val TAG = "DiracQemCurve"
     }
 }
