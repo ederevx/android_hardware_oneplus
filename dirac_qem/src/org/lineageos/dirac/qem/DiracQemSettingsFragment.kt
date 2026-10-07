@@ -18,10 +18,15 @@ package org.lineageos.dirac.qem
 
 import android.os.Bundle
 import androidx.preference.ListPreference
-import androidx.preference.PreferenceFragmentCompat
 import com.android.settingslib.widget.MainSwitchPreference
+import com.android.settingslib.widget.SettingsBasePreferenceFragment
 
-class DiracQemSettingsFragment : PreferenceFragmentCompat() {
+/**
+ * Extends the Settings fragment so the expressive preference group adapter is
+ * used: that adapter is what gives every row its card surface and its section
+ * grouping, so no row needs a hand-drawn background.
+ */
+class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
         addPreferencesFromResource(R.xml.dirac_settings)
         val context = requireContext()
