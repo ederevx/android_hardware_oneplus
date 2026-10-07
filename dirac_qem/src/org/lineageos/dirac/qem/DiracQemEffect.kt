@@ -18,10 +18,13 @@ package org.lineageos.dirac.qem
 
 import android.content.Context
 import android.content.SharedPreferences
-import android.media.AudioManager
+import android.util.Log
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Owns the Dirac QEM state and pushes it to the audio HAL on every change.
+ * Owns the Dirac QEM state and pushes a settled change to the audio HAL.
  * State lives in device-protected storage so the boot receiver can read it.
  *
  * Two output routes exist, mirroring the two Dirac topologies: the speaker
@@ -35,7 +38,12 @@ import android.media.AudioManager
 object DiracQemEffect {
     private const val PREFS = "dirac_qem"
     private const val KEY_ENABLED = "enabled"
-    private const val KEY_OUTPUT = "output"
+    private const val TAG_BANDS = "DiracQemBands"
+
+    /** Sentinel for a route that has not been resolved since process start. */
+    private const val NO_ROUTE = Int.MIN_VALUE
+
+    /** Bitmask of the routes the app has left enabled: 1 internal, 2 external. */
     private const val KEY_APPLIED = "applied"
     private const val KEY_STYLE = "style"
     private const val KEY_CUSTOM = "custom"
@@ -64,25 +72,50 @@ object DiracQemEffect {
     private const val SCALAR_TONAL_BALANCE = 3
     private const val SCALAR_LOUDNESS = 4
 
-    private fun prefs(context: Context): SharedPreferences =
-        context.createDeviceProtectedStorageContext()
+    private var prefsCache: SharedPreferences? = null
+
+    private fun prefs(context: Context): SharedPreferences {
+        prefsCache?.let { return it }
+        return context.createDeviceProtectedStorageContext()
             .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .also { prefsCache = it }
+    }
 
     fun isEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_ENABLED, false)
 
     /**
-     * The route the effect drives right now. A connected wired headset always
-     * wins, because the wired route can be live before HEADSET_PLUG reaches
-     * this app (or without the user touching the switch), and the engine must
-     * never keep driving the speaker module for a headset stream.
+     * The route this app last drove. A plug or unplug is announced by [apply],
+     * which is what refreshes it, so the hot band path reads this value instead
+     * of re-registering for the sticky jack broadcast on every frame.
      */
-    fun output(context: Context): Int {
-        val audioManager = context.getSystemService(AudioManager::class.java)
-        if (audioManager != null && audioManager.isWiredHeadsetOn) {
-            return OUTPUT_EXTERNAL
+    @Volatile
+    private var liveRoute = NO_ROUTE
+
+    /** The live route, resolved from the jack's own connection signal. */
+    fun output(context: Context): Int = resolveRoute(context, false)
+
+    private fun resolveRoute(context: Context, force: Boolean): Int {
+        if (force || liveRoute == NO_ROUTE) {
+            liveRoute = DiracRouteResolver.resolve(context)
         }
-        return prefs(context).getInt(KEY_OUTPUT, OUTPUT_INTERNAL)
+        return liveRoute
     }
+
+    /**
+     * The one ordered thread every HAL push runs on, and the one slot that holds
+     * the newest settled payload waiting for it. A gesture can never queue more
+     * than that slot: a newer settle replaces an older one and the drain loop
+     * only stops once the slot is empty, so the state the row shows is the state
+     * the HAL ends on.
+     */
+    private val pushExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "dirac-qem-push").apply { isDaemon = true }
+    }
+    private val pendingPush = AtomicReference<Push?>(null)
+    private val pushRunning = AtomicBoolean(false)
+
+    /** One band state on its way to the HAL. */
+    private class Push(val context: Context, val route: Int, val bands: IntArray)
 
     fun style(context: Context): Int = prefs(context).getInt(KEY_STYLE, DiracPresets.STYLE_NONE)
 
@@ -90,16 +123,44 @@ object DiracQemEffect {
 
     fun isMovie(context: Context): Boolean = prefs(context).getBoolean(KEY_MOVIE, false)
 
-    fun customBands(context: Context): FloatArray {
+    /**
+     * The one band-state array. It is loaded once from storage, or rebuilt when
+     * the preset changes, and then shared by the board, the sliders and the
+     * curve, so nothing keeps a second copy that a rebind could leave stale.
+     * Values are half-dB integers.
+     */
+    private var bandValues: IntArray? = null
+
+    /** Bumped only when [bandValues] actually changes, for cached views. */
+    var bandsGeneration: Int = 0
+        private set
+
+    private fun storedCustomBands(context: Context): IntArray {
         val stored = prefs(context).getString(KEY_CUSTOM, null)
-            ?: return FloatArray(DiracPresets.EQ_BANDS)
-        val parts = stored.split(";").filter { it.isNotEmpty() }
-        if (parts.size != DiracPresets.EQ_BANDS) return FloatArray(DiracPresets.EQ_BANDS)
-        return parts.map { it.toFloat() }.toFloatArray()
+        val bands = DiracPresets.parseCustomBands(stored)
+        val canonical = DiracPresets.encodeBands(bands)
+        if (stored != null && stored != canonical) {
+            prefs(context).edit().putString(KEY_CUSTOM, canonical).apply()
+        }
+        return bands
     }
 
-    fun currentBands(context: Context): FloatArray =
-        DiracPresets.valuesFor(style(context), customBands(context))
+    /** The seven band gains in effect, as the one shared array instance. */
+    fun currentBands(context: Context): IntArray = bandValues ?: reloadBands(context)
+
+    private fun reloadBands(context: Context): IntArray {
+        val loaded = DiracPresets.valuesFor(style(context), storedCustomBands(context))
+        publishBands(loaded)
+        return loaded
+    }
+
+    private fun publishBands(bands: IntArray) {
+        val previous = bandValues
+        bandValues = bands
+        if (previous == null || !previous.contentEquals(bands)) {
+            bandsGeneration++
+        }
+    }
 
     fun setEnabled(context: Context, enabled: Boolean) {
         prefs(context).edit().putBoolean(KEY_ENABLED, enabled).apply()
@@ -108,36 +169,102 @@ object DiracQemEffect {
 
     fun setStyle(context: Context, style: Int) {
         prefs(context).edit().putInt(KEY_STYLE, style).apply()
-        apply(context)
-    }
-
-    fun setBand(context: Context, band: Int, value: Float) {
-        val bands = customBands(context).copyOf()
-        bands[band] = value
-        prefs(context).edit()
-            .putString(KEY_CUSTOM, bands.joinToString(";"))
-            .putInt(KEY_STYLE, DiracPresets.STYLE_CUSTOM)
-            .apply()
-        apply(context)
-    }
-
-    fun setModel(context: Context, model: Int) {
-        prefs(context).edit().putInt(KEY_MODEL, model).apply()
+        reloadBands(context)
         apply(context)
     }
 
     /**
-     * Switch routes. The old route's module is explicitly disabled so it does
-     * not stay enabled when the headset is unplugged, then the new route's
-     * current state is applied.
+     * A slider drag is the only edit of the stored custom tune. The canonical
+     * array is the sole judge of whether anything changed, so a drag that
+     * lands on the value a band already holds persists and pushes nothing.
+     * Dragging while Custom is active keeps the rest of the stored tune;
+     * dragging while a preset is shown adopts the displayed curve as the
+     * custom baseline, so the band that moves and the band that was there both
+     * survive. Selecting a preset never comes through here. Only the in-memory
+     * array moves here; [pushBands] and [persistBands] run once per settle, and
+     * the return value says whether the canonical array actually changed.
      */
-    fun setOutput(context: Context, output: Int) {
-        prefs(context).edit().putInt(KEY_OUTPUT, output).apply()
-        val current = output(context)
-        val applied = prefs(context).getInt(KEY_APPLIED, OUTPUT_INTERNAL)
-        if (applied != current) {
-            sendDisable(context, applied)
+    fun setBand(context: Context, band: Int, value: Int): Boolean {
+        val clamped = value.coerceIn(DiracPresets.MIN_HALF_DB, DiracPresets.MAX_HALF_DB)
+        val bands = currentBands(context)
+        if (bands.getOrElse(band) { 0 } == clamped) {
+            // Always on: the audio verification greps this short-circuit.
+            Log.d(TAG_BANDS, "band=$band value=$clamped unchanged")
+            return false
         }
+        // The displayed array is the baseline in every case: on Custom it is
+        // the stored tune, and on a preset adopting it is exactly what makes a
+        // drag an edit of that preset. The persist and the push are held back
+        // to the settle, so nothing here touches disk or the HAL.
+        val base = bands.copyOf()
+        base[band] = clamped
+        publishBands(base)
+        Log.d(TAG_BANDS, "band=$band value=$clamped applied")
+        return true
+    }
+
+    /**
+     * Hands the settled band state to the push thread. The UI thread only stores
+     * the payload in the single slot (the engine's arrays are write-once, so no
+     * copy is needed) and makes sure the drain loop is running; the 16
+     * synchronous setParameters run on the worker. A step costs 16 HAL writes
+     * where the full enable set costs 80 on the speaker route and 112 on the
+     * headset route.
+     */
+    fun pushBands(context: Context) {
+        if (!isEnabled(context)) {
+            return
+        }
+        val appContext = context.applicationContext ?: context
+        pendingPush.set(Push(appContext, output(context), currentBands(context)))
+        if (pushRunning.compareAndSet(false, true)) {
+            pushExecutor.execute(::drainPushes)
+        }
+    }
+
+    /**
+     * The ordered drain loop. It takes whatever is in the slot, sends it, and
+     * keeps going until the slot is empty, so a settle that lands while a push
+     * is in flight is sent after it rather than stranded. It re-arms itself if a
+     * payload arrives in the gap before [pushRunning] is cleared.
+     */
+    private fun drainPushes() {
+        try {
+            while (true) {
+                val push = pendingPush.getAndSet(null) ?: break
+                sendBands(push)
+            }
+        } finally {
+            pushRunning.set(false)
+            if (pendingPush.get() != null && pushRunning.compareAndSet(false, true)) {
+                pushExecutor.execute(::drainPushes)
+            }
+        }
+    }
+
+    private fun sendBands(push: Push) {
+        val started = System.nanoTime()
+        val frames = QemTransport(push.context).send(
+            moduleFor(push.route), topoFor(push.route), devicesFor(push.route),
+            QemProtocol.PARAM_EQ_BANDS, QemProtocol.eqBandsPayload(push.bands),
+            sndDevIdFor(push.route))
+        // Always on, and on the worker: this is the HAL-side proof, not a
+        // frame-level measurement, so it costs the UI thread nothing.
+        Log.d(TAG_BANDS, "push route=${push.route} frames=$frames ns=${System.nanoTime() - started}")
+    }
+
+    /** Writes the settled custom tune and its style once, when the drag ends. */
+    fun persistBands(context: Context) {
+        val started = System.nanoTime()
+        prefs(context).edit()
+            .putString(KEY_CUSTOM, DiracPresets.encodeBands(currentBands(context)))
+            .putInt(KEY_STYLE, DiracPresets.STYLE_CUSTOM)
+            .apply()
+        DiracTrace.log(TAG_BANDS) { "persist ns=${System.nanoTime() - started}" }
+    }
+
+    fun setModel(context: Context, model: Int) {
+        prefs(context).edit().putInt(KEY_MODEL, model).apply()
         apply(context)
     }
 
@@ -150,7 +277,6 @@ object DiracQemEffect {
     fun setBluetooth(context: Context, connected: Boolean) {
         send(context, SCALAR_LOUDNESS, QemProtocol.scalarPayload(
             SCALAR_LOUDNESS, if (connected) BT_LOUDNESS else DEFAULT_LOUDNESS))
-        if (connected) setOutput(context, OUTPUT_EXTERNAL)
     }
 
     private fun send(context: Context, key: Int, payload: ByteArray) {
@@ -160,28 +286,61 @@ object DiracQemEffect {
             QemProtocol.PARAM_SCALAR_BASE + key, payload, sndDevIdFor(output))
     }
 
+    /**
+     * Pushes the stored state to the audio layer. The route is resolved once so
+     * that every frame of a pass addresses the same module, and the disable
+     * path never follows the route resolved here: it turns off the module the
+     * enable path actually turned on, which is not necessarily the current one
+     * (the headset can be unplugged between the two passes).
+     */
     fun apply(context: Context) {
-        val output = output(context)
+        // A pass is where the route is re-read; the band path then reuses it.
+        val route = resolveRoute(context, true)
+        val applied = appliedRoutes(context)
         if (!isEnabled(context)) {
-            sendOp(context, QemProtocol.PARAM_ENABLE, QemProtocol.intPayload(0))
-            markApplied(context, output)
+            // Clear every route the app enabled. An empty record means the app
+            // state was reset while the audio layer kept a calibration, so both
+            // modules are cleared rather than trusting the record.
+            if (applied == 0) {
+                sendDisable(context, OUTPUT_INTERNAL)
+                sendDisable(context, OUTPUT_EXTERNAL)
+            } else {
+                for (candidate in 0..1) {
+                    if (applied and routeBit(candidate) != 0) {
+                        sendDisable(context, candidate)
+                    }
+                }
+            }
+            setAppliedRoutes(context, 0)
             return
         }
-        val bands = currentBands(context)
-        sendOp(context, QemProtocol.PARAM_ENABLE, QemProtocol.intPayload(1))
-        sendOp(context, QemProtocol.PARAM_EQ_ENABLE, QemProtocol.intPayload(1))
-        sendOp(context, QemProtocol.PARAM_EQ_BANDS, QemProtocol.floatArrayPayload(bands))
-        sendOp(context, QemProtocol.PARAM_SFX_ENABLE, QemProtocol.intPayload(1))
-        if (output == OUTPUT_EXTERNAL) {
-            sendOp(context, QemProtocol.PARAM_HDSOUND_ENABLE, QemProtocol.intPayload(1))
-            val index = DiracPresets.MODEL_FILTER_INDEX[model(context)]
-            sendOp(context, QemProtocol.PARAM_HDSOUND_FILTERIDX, QemProtocol.intPayload(index))
+
+        // Only the route being driven may stay enabled. A route this app never
+        // enabled has nothing to clear, so only a route that is on record (or
+        // an empty record from a reset, which clears both) is disabled here.
+        for (candidate in 0..1) {
+            if (candidate != route && (applied == 0 || applied and routeBit(candidate) != 0)) {
+                sendDisable(context, candidate)
+            }
         }
-        markApplied(context, output)
+        sendEnable(context, route)
+        setAppliedRoutes(context, routeBit(route))
     }
 
-    private fun sendOp(context: Context, param: Int, payload: ByteArray) {
-        val output = output(context)
+    private fun sendEnable(context: Context, output: Int) {
+        val bands = currentBands(context)
+        sendOp(context, output, QemProtocol.PARAM_ENABLE, QemProtocol.intPayload(1))
+        sendOp(context, output, QemProtocol.PARAM_EQ_ENABLE, QemProtocol.intPayload(1))
+        sendOp(context, output, QemProtocol.PARAM_EQ_BANDS, QemProtocol.eqBandsPayload(bands))
+        sendOp(context, output, QemProtocol.PARAM_SFX_ENABLE, QemProtocol.intPayload(1))
+        if (output == OUTPUT_EXTERNAL) {
+            sendOp(context, output, QemProtocol.PARAM_HDSOUND_ENABLE, QemProtocol.intPayload(1))
+            val index = DiracPresets.MODEL_FILTER_INDEX[model(context)]
+            sendOp(context, output, QemProtocol.PARAM_HDSOUND_FILTERIDX, QemProtocol.intPayload(index))
+        }
+    }
+
+    private fun sendOp(context: Context, output: Int, param: Int, payload: ByteArray) {
         QemTransport(context).send(
             moduleFor(output), topoFor(output), devicesFor(output), param, payload,
             sndDevIdFor(output))
@@ -193,9 +352,13 @@ object DiracQemEffect {
             QemProtocol.PARAM_ENABLE, QemProtocol.intPayload(0), sndDevIdFor(output))
     }
 
-    private fun markApplied(context: Context, output: Int) {
-        prefs(context).edit().putInt(KEY_APPLIED, output).apply()
+    private fun appliedRoutes(context: Context): Int = prefs(context).getInt(KEY_APPLIED, 0)
+
+    private fun setAppliedRoutes(context: Context, routes: Int) {
+        prefs(context).edit().putInt(KEY_APPLIED, routes).apply()
     }
+
+    private fun routeBit(output: Int): Int = 1 shl output
 
     private fun moduleFor(output: Int): Int =
         if (output == OUTPUT_EXTERNAL) QemProtocol.MODULE_EXTERNAL else QemProtocol.MODULE_INTERNAL

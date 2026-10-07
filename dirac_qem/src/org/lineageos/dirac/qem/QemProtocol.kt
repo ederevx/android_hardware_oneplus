@@ -31,7 +31,6 @@ object QemProtocol {
     const val TOPO_EXTERNAL = 0x10012D01
 
     val DEVICES_INTERNAL = intArrayOf(2)
-    val DEVICES_EXTERNAL = intArrayOf(4, 8, 131072, 2097152, 4096, 8192, 16384, 67108864)
     val APP_TYPES = intArrayOf(69936, 69940)
     val SAMPLE_RATES = intArrayOf(44100, 48000, 96000, 192000)
     val PERSIST = intArrayOf(0, 1)
@@ -58,9 +57,14 @@ object QemProtocol {
     fun intPayload(value: Int): ByteArray =
         ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(value).array()
 
-    fun floatArrayPayload(values: FloatArray): ByteArray {
-        val buffer = ByteBuffer.allocate(values.size * 4).order(ByteOrder.LITTLE_ENDIAN)
-        values.forEach { buffer.putFloat(it) }
+    /**
+     * The 0x12D36 band payload is seven little-endian 32-bit floats in dB.
+     * The model carries half-dB integers, so the division by two happens here,
+     * at the one place the frame is encoded; it is exact for every half step.
+     */
+    fun eqBandsPayload(halfDb: IntArray): ByteArray {
+        val buffer = ByteBuffer.allocate(halfDb.size * FLOAT_SIZE).order(ByteOrder.LITTLE_ENDIAN)
+        halfDb.forEach { buffer.putFloat(it * DiracPresets.HALF_DB_TO_DB) }
         return buffer.array()
     }
 
@@ -99,4 +103,5 @@ object QemProtocol {
     }
 
     private const val HEADER_SIZE = 12
+    private const val FLOAT_SIZE = 4
 }

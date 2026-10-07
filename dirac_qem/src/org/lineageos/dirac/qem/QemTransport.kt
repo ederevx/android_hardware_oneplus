@@ -36,8 +36,9 @@ class QemTransport(context: Context) {
         appTypes: IntArray = QemProtocol.APP_TYPES,
         persistValues: IntArray = QemProtocol.PERSIST,
         rates: IntArray = QemProtocol.SAMPLE_RATES,
-    ) {
+    ): Int {
         val data = QemProtocol.frame(module, param, payload)
+        var frames = 0
         devices.forEach { device ->
             appTypes.forEach { appType ->
                 persistValues.forEach { persist ->
@@ -45,9 +46,11 @@ class QemTransport(context: Context) {
                         audioManager.setParameters(
                             QemProtocol.setString(topo, appType, persist, device, sndDevId, rate, data)
                         )
+                        frames++
                     }
                 }
             }
         }
+        return frames
     }
 }

@@ -29,11 +29,9 @@ class DiracStateReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
             Intent.ACTION_HEADSET_PLUG -> {
-                val plugged = intent.getIntExtra(EXTRA_STATE, 0) == 1
-                DiracQemEffect.setOutput(
-                    context,
-                    if (plugged) DiracQemEffect.OUTPUT_EXTERNAL else DiracQemEffect.OUTPUT_INTERNAL,
-                )
+                // The route is resolved from the jack's own state, so a plug or
+                // unplug only has to re-run the push.
+                DiracQemEffect.apply(context)
             }
             ACTION_A2DP_CONNECTION_STATE_CHANGED -> {
                 val state = intent.getIntExtra(EXTRA_A2DP_STATE, BluetoothProfile.STATE_DISCONNECTED)
@@ -46,7 +44,6 @@ class DiracStateReceiver : BroadcastReceiver() {
     }
 
     private companion object {
-        const val EXTRA_STATE = "state"
         const val ACTION_A2DP_CONNECTION_STATE_CHANGED =
             "android.bluetooth.a2dp.profile.action.CONNECTION_STATE_CHANGED"
         const val EXTRA_A2DP_STATE = "android.bluetooth.profile.extra.STATE"

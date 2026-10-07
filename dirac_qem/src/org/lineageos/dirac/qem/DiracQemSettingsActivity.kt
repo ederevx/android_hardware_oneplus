@@ -18,8 +18,14 @@ package org.lineageos.dirac.qem
 
 import android.os.Bundle
 import com.android.settingslib.collapsingtoolbar.CollapsingToolbarBaseActivity
+import com.android.settingslib.widget.ExpressiveDesignEnabledProvider
 
-class DiracQemSettingsActivity : CollapsingToolbarBaseActivity() {
+class DiracQemSettingsActivity :
+    CollapsingToolbarBaseActivity(), ExpressiveDesignEnabledProvider {
+
+    /** The page is built from the expressive styles, so opt this activity in. */
+    override fun isExpressiveDesignEnabled(): Boolean = true
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (savedInstanceState == null) {
