@@ -42,8 +42,15 @@ import android.util.Log
  * default is the connected output resolved by [ToneTarget]), device
  * speaker|headset|earpiece and usage media|alarm select the stream's preferred
  * output and usage (default is the media output), apptype (69936),
- * rate (48000), caltype (1), persist (0), param (0x12D01), delay ms before the
- * first frame (2000), gap ms between frames (1200), freq Hz (1000).
+ * rate (48000), caltype (1), persist (0), module (0x12D00, the speaker's
+ * module; the headset topology 0x10012d01 instantiates 0x12D01), param
+ * (0x12D01), value (1), params (a comma list of `param` or `param=value`
+ * entries, hex or decimal, all sent in sequence into the one held stream,
+ * e.g. module=0x12D01 params="0x12d01=1,0x12d03=3,0x12d04=3"), delay ms
+ * before the first frame (2000), gap ms between topo/device combos (1200),
+ * seqgap ms between the params of one combo (150), freq Hz (1000). The long
+ * names durationMs/delayMs/gapMs/sndDevIds/appType/sampleRate/frequencyHz are
+ * accepted as aliases of the short ones.
  */
 class ToneProbeActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -65,24 +72,37 @@ class ToneProbeActivity : Activity() {
             }
             Thread.sleep(request.delayMs)
             var index = 0
+            val combos = request.topos.size * request.sndDevIds.size
+            val perComboMs = request.gapMs +
+                (request.params.size - 1).coerceAtLeast(0) * request.seqGapMs
             for (topo in request.topos) {
                 for (devId in request.sndDevIds) {
                     index++
-                    Log.i(TAG, "frame $index/${request.topos.size * request.sndDevIds.size}" +
-                        " topo=0x${Integer.toHexString(topo)} snddev=$devId")
-                    frames.send(
-                        topo = topo,
-                        appType = request.appType,
-                        sndDevId = devId,
-                        sampleRate = request.sampleRate,
-                        calType = request.calType,
-                        persist = request.persist,
-                        param = request.param,
-                    )
+                    Log.i(TAG, "combo $index/$combos topo=0x${Integer.toHexString(topo)}" +
+                        " snddev=$devId module=0x${Integer.toHexString(request.module)}" +
+                        " params=" + request.params.joinToString { "0x" + Integer.toHexString(it) })
+                    request.params.forEachIndexed { i, param ->
+                        frames.send(
+                            topo = topo,
+                            appType = request.appType,
+                            sndDevId = devId,
+                            sampleRate = request.sampleRate,
+                            calType = request.calType,
+                            persist = request.persist,
+                            module = request.module,
+                            param = param,
+                            value = request.values.getOrElse(i) {
+                                request.values.lastOrNull() ?: request.value
+                            },
+                        )
+                        if (i < request.params.size - 1) {
+                            Thread.sleep(request.seqGapMs)
+                        }
+                    }
                     Thread.sleep(request.gapMs)
                 }
             }
-            val remaining = request.durationMs - request.delayMs - index * request.gapMs
+            val remaining = request.durationMs - request.delayMs - index * perComboMs
             Log.i(TAG, "walk done: $index frames sent; holding the tone ${remaining}ms")
             if (remaining > 0) {
                 Thread.sleep(remaining)
@@ -105,61 +125,121 @@ class ToneProbeActivity : Activity() {
         val sampleRate: Int,
         val calType: Int,
         val persist: Int,
+        val module: Int,
         val param: Int,
+        val value: Int,
+        val params: List<Int>,
+        val values: List<Int>,
+        val seqGapMs: Long,
         val frequencyHz: Int,
     ) {
         companion object {
             fun from(intent: Intent?, defaultSndDevId: Int): Request {
-                val duration = intent?.getIntExtra(EXTRA_DURATION, DEFAULT_DURATION) ?: DEFAULT_DURATION
+                val duration = intExtra(intent, EXTRA_DURATION, EXTRA_DURATION_MS,
+                    default = DEFAULT_DURATION)
+                val param = intExtra(intent, EXTRA_PARAM, default = QemFrames.PARAM_ENABLE)
+                val value = intExtra(intent, EXTRA_VALUE, default = QemFrames.ENABLE)
+                val paramValues = parseParamValues(stringExtra(intent, EXTRA_PARAMS), value)
                 return Request(
                     durationMs = duration.coerceIn(MIN_DURATION, MAX_DURATION) * 1000L,
-                    delayMs = (intent?.getIntExtra(EXTRA_DELAY, DEFAULT_DELAY) ?: DEFAULT_DELAY)
+                    delayMs = intExtra(intent, EXTRA_DELAY, EXTRA_DELAY_MS,
+                        default = DEFAULT_DELAY).coerceAtLeast(0).toLong(),
+                    gapMs = intExtra(intent, EXTRA_GAP, EXTRA_GAP_MS,
+                        default = DEFAULT_GAP).coerceAtLeast(0).toLong(),
+                    topos = parseInts(stringExtra(intent, EXTRA_TOPOS)).ifEmpty { DEFAULT_TOPOS },
+                    sndDevIds = parseInts(stringExtra(intent, EXTRA_DEVIDS, EXTRA_SNDDEVIDS))
+                        .ifEmpty { listOf(defaultSndDevId) },
+                    appType = intExtra(intent, EXTRA_APPTYPE, EXTRA_APPTYPE_ALT,
+                        default = DEFAULT_APPTYPE),
+                    sampleRate = intExtra(intent, EXTRA_RATE, EXTRA_SAMPLERATE,
+                        default = DEFAULT_RATE),
+                    calType = intExtra(intent, EXTRA_CALTYPE, default = QemFrames.CAL_TYPE_POPP),
+                    persist = intExtra(intent, EXTRA_PERSIST, default = DEFAULT_PERSIST),
+                    module = intExtra(intent, EXTRA_MODULE, default = QemFrames.MODULE_INTERNAL),
+                    param = param,
+                    value = value,
+                    params = paramValues.map { it.first }.ifEmpty { listOf(param) },
+                    values = paramValues.map { it.second }.ifEmpty { listOf(value) },
+                    seqGapMs = intExtra(intent, EXTRA_SEQGAP, default = DEFAULT_SEQGAP)
                         .coerceAtLeast(0).toLong(),
-                    gapMs = (intent?.getIntExtra(EXTRA_GAP, DEFAULT_GAP) ?: DEFAULT_GAP)
-                        .coerceAtLeast(0).toLong(),
-                    topos = parseInts(intent?.getStringExtra(EXTRA_TOPOS)).ifEmpty { DEFAULT_TOPOS },
-                    sndDevIds = parseInts(intent?.getStringExtra(EXTRA_DEVIDS)).ifEmpty {
-                        listOf(defaultSndDevId)
-                    },
-                    appType = intent?.getIntExtra(EXTRA_APPTYPE, DEFAULT_APPTYPE) ?: DEFAULT_APPTYPE,
-                    sampleRate = intent?.getIntExtra(EXTRA_RATE, DEFAULT_RATE) ?: DEFAULT_RATE,
-                    calType = intent?.getIntExtra(EXTRA_CALTYPE, QemFrames.CAL_TYPE_POPP)
-                        ?: QemFrames.CAL_TYPE_POPP,
-                    persist = intent?.getIntExtra(EXTRA_PERSIST, DEFAULT_PERSIST) ?: DEFAULT_PERSIST,
-                    param = intent?.getIntExtra(EXTRA_PARAM, QemFrames.PARAM_ENABLE)
-                        ?: QemFrames.PARAM_ENABLE,
-                    frequencyHz = intent?.getIntExtra(EXTRA_FREQ, DEFAULT_FREQ) ?: DEFAULT_FREQ,
+                    frequencyHz = intExtra(intent, EXTRA_FREQ, EXTRA_FREQUENCY,
+                        default = DEFAULT_FREQ),
                 )
+            }
+
+            /** Accepts an int extra, or a decimal/hex string extra for `--es`. */
+            private fun intExtra(intent: Intent?, vararg names: String, default: Int): Int {
+                for (name in names) {
+                    val raw = intent?.extras?.get(name) ?: continue
+                    when (raw) {
+                        is Int -> return raw
+                        is Long -> return raw.toInt()
+                        is String -> parseNumber(raw)?.let { return it }
+                    }
+                }
+                return default
+            }
+
+            private fun stringExtra(intent: Intent?, vararg names: String): String? {
+                for (name in names) {
+                    val raw = intent?.extras?.get(name) ?: continue
+                    if (raw is String) return raw
+                }
+                return null
             }
 
             private fun parseInts(raw: String?): List<Int> = raw.orEmpty()
                 .split(',', ' ', ';')
-                .mapNotNull { token ->
-                    val trimmed = token.trim()
-                    if (trimmed.isEmpty()) {
-                        null
-                    } else {
-                        runCatching {
-                            if (trimmed.startsWith("0x", ignoreCase = true)) {
-                                trimmed.substring(2).toLong(16).toInt()
-                            } else {
-                                trimmed.toLong().toInt()
-                            }
-                        }.getOrNull()
+                .mapNotNull { parseNumber(it.trim()) }
+
+            /** Splits "0x12d01=1,0x12d03=3" into (param, value) pairs. */
+            private fun parseParamValues(raw: String?, fallbackValue: Int): List<Pair<Int, Int>> =
+                raw.orEmpty()
+                    .split(',', ' ', ';')
+                    .mapNotNull { token ->
+                        val trimmed = token.trim()
+                        if (trimmed.isEmpty()) {
+                            null
+                        } else {
+                            val parts = trimmed.split('=', limit = 2)
+                            val param = parseNumber(parts[0]) ?: return@mapNotNull null
+                            val value = if (parts.size == 2) parseNumber(parts[1]) else null
+                            param to (value ?: fallbackValue)
+                        }
                     }
-                }
+
+            private fun parseNumber(raw: String?): Int? = raw?.let {
+                runCatching {
+                    if (it.startsWith("0x", ignoreCase = true)) {
+                        it.substring(2).toLong(16).toInt()
+                    } else {
+                        it.toLong().toInt()
+                    }
+                }.getOrNull()
+            }
 
             private const val EXTRA_DURATION = "duration"
+            private const val EXTRA_DURATION_MS = "durationMs"
             private const val EXTRA_DELAY = "delay"
+            private const val EXTRA_DELAY_MS = "delayMs"
             private const val EXTRA_GAP = "gap"
+            private const val EXTRA_GAP_MS = "gapMs"
             private const val EXTRA_TOPOS = "topos"
             private const val EXTRA_DEVIDS = "devids"
+            private const val EXTRA_SNDDEVIDS = "sndDevIds"
             private const val EXTRA_APPTYPE = "apptype"
+            private const val EXTRA_APPTYPE_ALT = "appType"
             private const val EXTRA_RATE = "rate"
+            private const val EXTRA_SAMPLERATE = "sampleRate"
             private const val EXTRA_CALTYPE = "caltype"
             private const val EXTRA_PERSIST = "persist"
+            private const val EXTRA_MODULE = "module"
             private const val EXTRA_PARAM = "param"
+            private const val EXTRA_VALUE = "value"
+            private const val EXTRA_PARAMS = "params"
+            private const val EXTRA_SEQGAP = "seqgap"
             private const val EXTRA_FREQ = "freq"
+            private const val EXTRA_FREQUENCY = "frequencyHz"
 
             private const val DEFAULT_DURATION = 60
             private const val MIN_DURATION = 5
@@ -169,6 +249,7 @@ class ToneProbeActivity : Activity() {
             private const val DEFAULT_APPTYPE = 69936
             private const val DEFAULT_RATE = 48000
             private const val DEFAULT_PERSIST = 0
+            private const val DEFAULT_SEQGAP = 150
             private const val DEFAULT_FREQ = 1000
             private val DEFAULT_TOPOS = listOf(0x10012D00, 0x10012D01, 0x10312)
         }
