@@ -23,11 +23,20 @@ import android.graphics.Path
 import android.util.AttributeSet
 import android.util.Log
 import android.view.View
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.exp
+import kotlin.math.ln
+import kotlin.math.log10
+import kotlin.math.pow
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
- * Draws the current equalizer curve as a filled area over the -6..+6 dB range
- * on a light grid, so the top of the Dirac page reads as a curve even when
- * every band sits at 0 dB.
+ * Draws the equalizer response as the summed magnitude response of the seven
+ * peaking bands, sampled on a log frequency axis, on a light grid; the curve
+ * therefore shows the real rounded shape of the bands rather than straight
+ * segments between them.
  *
  * The bands are read from the engine while drawing, from the same accessor the
  * board reads, so the curve can never render a stale array or one that was
@@ -78,10 +87,10 @@ class EqCurveView @JvmOverloads constructor(
 
         bands = (bandProvider?.invoke() ?: DiracQemEffect.currentBands(context))
             .copyOf(DiracPresets.EQ_BANDS)
-        val n = bands.size
+        val n = minOf(bands.size, DiracPresets.BAND_FREQS.size)
         Log.d(
             TAG,
-            "curve bands n=$n first=${bands.firstOrNull()} last=${bands.lastOrNull()} " +
+            "curve bands n=${bands.size} first=${bands.firstOrNull()} last=${bands.lastOrNull()} " +
                 "provider=${bandProvider != null}",
         )
         if (n < 2) {
@@ -102,36 +111,83 @@ class EqCurveView @JvmOverloads constructor(
             return
         }
 
-        fun x(i: Int) = left + spanX * i / (n - 1).toFloat()
-        fun y(v: Float) = top + spanY * (6f - v.coerceIn(-6f, 6f)) / 12f
+        val logMin = ln(DiracPresets.BAND_FREQS.first())
+        val logSpan = ln(DiracPresets.BAND_FREQS.last()) - logMin
+        fun yFor(db: Float) = top + spanY * (6f - db.coerceIn(-6f, 6f)) / 12f
 
-        // Grid: the +6, 0 and -6 dB lines plus one line per band, so a flat
-        // 0 dB curve is still legible.
+        // Grid: the +6, 0 and -6 dB lines plus one line per band centre.
         canvas.drawLine(left, top, right, top, gridPaint)
-        canvas.drawLine(left, y(0f), right, y(0f), zeroPaint)
+        canvas.drawLine(left, yFor(0f), right, yFor(0f), zeroPaint)
         canvas.drawLine(left, bottom, right, bottom, gridPaint)
         for (i in 0 until n) {
-            canvas.drawLine(x(i), top, x(i), bottom, gridPaint)
+            val x = left + spanX * (ln(DiracPresets.BAND_FREQS[i]) - logMin) / logSpan
+            canvas.drawLine(x, top, x, bottom, gridPaint)
         }
 
-        // Filled area under the curve.
+        // Sample the summed response of all bands on a log frequency axis.
+        val curve = Path()
         val area = Path()
-        area.moveTo(x(0), bottom)
-        area.lineTo(x(0), y(bands[0]))
-        for (i in 1 until n) {
-            area.lineTo(x(i), y(bands[i]))
+        for (sample in 0..SAMPLES) {
+            val t = sample / SAMPLES.toFloat()
+            val freq = exp(logMin + t * logSpan)
+            val x = left + spanX * t
+            val y = yFor(totalResponseDb(freq))
+            if (sample == 0) {
+                curve.moveTo(x, y)
+                area.moveTo(x, bottom)
+                area.lineTo(x, y)
+            } else {
+                curve.lineTo(x, y)
+                area.lineTo(x, y)
+            }
         }
-        area.lineTo(x(n - 1), bottom)
+        area.lineTo(right, bottom)
         area.close()
         canvas.drawPath(area, areaPaint)
-
-        // The curve itself.
-        val curve = Path()
-        curve.moveTo(x(0), y(bands[0]))
-        for (i in 1 until n) {
-            curve.lineTo(x(i), y(bands[i]))
-        }
         canvas.drawPath(curve, curvePaint)
+    }
+
+    /** Sum of the seven band responses, in dB, at [freq]. */
+    private fun totalResponseDb(freq: Float): Float {
+        var total = 0f
+        for (i in DiracPresets.BAND_FREQS.indices) {
+            total += peakingDb(DiracPresets.BAND_FREQS[i], bands[i], freq)
+        }
+        return total
+    }
+
+    /**
+     * Magnitude response of one peaking band at [freq], in dB, from the RBJ
+     * audio EQ cookbook at a nominal 48 kHz rate: the shape is what the graph
+     * shows, so the exact rate only nudges where the band tapers off.
+     */
+    private fun peakingDb(f0: Float, gainDb: Float, freq: Float): Float {
+        if (gainDb == 0f) {
+            return 0f
+        }
+        val a = 10f.pow(gainDb / 40f)
+        val w0 = 2f * PI.toFloat() * f0 / RATE
+        val alpha = sin(w0) / (2f * BAND_Q)
+        val cosW0 = cos(w0)
+        val b0 = 1f + alpha * a
+        val b1 = -2f * cosW0
+        val b2 = 1f - alpha * a
+        val a0 = 1f + alpha / a
+        val a1 = -2f * cosW0
+        val a2 = 1f - alpha / a
+
+        val w = 2f * PI.toFloat() * freq / RATE
+        val cos1 = cos(w)
+        val sin1 = sin(w)
+        val cos2 = cos(2f * w)
+        val sin2 = sin(2f * w)
+        val numRe = b0 + b1 * cos1 + b2 * cos2
+        val numIm = -(b1 * sin1 + b2 * sin2)
+        val denRe = a0 + a1 * cos1 + a2 * cos2
+        val denIm = -(a1 * sin1 + a2 * sin2)
+        val num = sqrt(numRe * numRe + numIm * numIm)
+        val den = sqrt(denRe * denRe + denIm * denIm)
+        return 20f * log10(num / den)
     }
 
     /**
@@ -147,5 +203,14 @@ class EqCurveView @JvmOverloads constructor(
 
     private companion object {
         const val TAG = "DiracQemCurve"
+        const val RATE = 48_000f
+        const val SAMPLES = 192
+
+        /**
+         * The decoded band payload carries the seven gains and nothing else,
+         * so the real bandwidth is not available. The bands are roughly 1.3
+         * octaves apart, which is a peaking Q of about 1, so use that.
+         */
+        const val BAND_Q = 1.0f
     }
 }
