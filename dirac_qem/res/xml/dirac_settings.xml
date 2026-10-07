@@ -8,12 +8,18 @@
         android:persistent="false" />
 
     <!-- Added only when the build ships the dirac_a2dp effect; the fragment
-         removes it when config_dirac_a2dp_fallback_available is false. -->
-    <com.android.settingslib.widget.MainSwitchPreference
-        android:key="dirac_a2dp_fallback"
-        android:title="@string/dirac_a2dp_fallback_title"
-        android:summary="@string/dirac_a2dp_fallback_summary"
-        android:persistent="false" />
+         removes the whole category when config_dirac_a2dp_fallback_available
+         is false. A plain settings switch row nested under a section, not a
+         second main-switch bar. -->
+    <PreferenceCategory
+        android:key="dirac_a2dp_fallback_category"
+        android:title="@string/dirac_a2dp_fallback_category">
+        <androidx.preference.SwitchPreferenceCompat
+            android:key="dirac_a2dp_fallback"
+            android:title="@string/dirac_a2dp_fallback_title"
+            android:summary="@string/dirac_a2dp_fallback_summary"
+            android:persistent="false" />
+    </PreferenceCategory>
 
     <ListPreference
         android:key="dirac_model"

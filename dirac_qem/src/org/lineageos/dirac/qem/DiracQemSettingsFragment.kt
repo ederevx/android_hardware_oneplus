@@ -21,6 +21,8 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Bundle
 import androidx.preference.ListPreference
+import androidx.preference.PreferenceCategory
+import androidx.preference.SwitchPreferenceCompat
 import com.android.settingslib.widget.MainSwitchPreference
 import com.android.settingslib.widget.SettingsBasePreferenceFragment
 
@@ -73,13 +75,15 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
             }
         }
 
-        // The A2DP fallback switch exists only when the build ships the
-        // dirac_a2dp effect. Absent that, the row is removed entirely: no dead
-        // preference, no listener, and nothing that would ever be pushed.
-        val fallback = findPreference<MainSwitchPreference>(KEY_A2DP_FALLBACK)
-        if (fallback != null) {
+        // The A2DP fallback row exists only when the build ships the
+        // dirac_a2dp effect. Absent that, the whole section is removed: no
+        // dead preference, no listener, and nothing that would ever be pushed.
+        // It is a plain nested switch, not a second main-switch bar.
+        val fallbackCategory = findPreference<PreferenceCategory>(KEY_A2DP_FALLBACK_CATEGORY)
+        val fallback = findPreference<SwitchPreferenceCompat>(KEY_A2DP_FALLBACK)
+        if (fallbackCategory != null && fallback != null) {
             if (!DiracQemEffect.isA2dpFallbackAvailable(context)) {
-                preferenceScreen.removePreference(fallback)
+                preferenceScreen.removePreference(fallbackCategory)
             } else {
                 fallback.isChecked = DiracQemEffect.isA2dpFallbackEnabled(context)
                 fallback.setOnPreferenceChangeListener { _, value ->
@@ -146,6 +150,7 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
     private companion object {
         const val KEY_ENABLED = "dirac_enable"
         const val KEY_A2DP_FALLBACK = "dirac_a2dp_fallback"
+        const val KEY_A2DP_FALLBACK_CATEGORY = "dirac_a2dp_fallback_category"
         const val KEY_MODEL = "dirac_model"
         const val KEY_STYLE = "dirac_style"
         const val KEY_EQ_PREVIEW = "dirac_eq_preview"

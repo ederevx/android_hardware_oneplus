@@ -6,6 +6,7 @@
     <string name="dirac_model_title">Headset model</string>
     <string name="dirac_style_title">Preset</string>
     <string name="dirac_eq_title">Custom equalizer</string>
-    <string name="dirac_a2dp_fallback_title">Extend Dirac to Bluetooth</string>
-    <string name="dirac_a2dp_fallback_summary">Applies a software Dirac curve to Bluetooth and other outputs the DSP topology cannot reach. It is a fallback approximation; it does not replace or override the built-in Dirac tuning, and it cannot reproduce the device correction and limiter.</string>
+    <string name="dirac_a2dp_fallback_category">Bluetooth and other outputs</string>
+    <string name="dirac_a2dp_fallback_title">Enable software approximation fallback</string>
+    <string name="dirac_a2dp_fallback_summary">Lets Bluetooth and other non-DSP audio routes receive a Dirac effect approximation; it does not replace or override the built-in tuning.</string>
 </resources>
