@@ -12,7 +12,7 @@
     <application
         android:label="OnePlusDiracQem"
         android:icon="@drawable/ic_dirac"
-        android:theme="@style/Theme.SubSettingsBase"
+        android:theme="@style/Theme.SubSettingsBase.Expressive"
         android:persistent="true"
         android:defaultToDeviceProtectedStorage="true"
         android:directBootAware="true">

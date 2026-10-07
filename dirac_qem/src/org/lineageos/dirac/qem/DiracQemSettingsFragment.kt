@@ -19,7 +19,6 @@ package org.lineageos.dirac.qem
 import android.os.Bundle
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceFragmentCompat
-import androidx.preference.SeekBarPreference
 import com.android.settingslib.widget.MainSwitchPreference
 
 class DiracQemSettingsFragment : PreferenceFragmentCompat() {
@@ -52,33 +51,27 @@ class DiracQemSettingsFragment : PreferenceFragmentCompat() {
             }
         }
 
-        val bands = DiracQemEffect.currentBands(context)
-        for (band in 0 until DiracPresets.EQ_BANDS) {
-            findPreference<SeekBarPreference>(KEY_BAND_PREFIX + band)?.let { preference ->
-                preference.min = MIN_GAIN
-                preference.max = MAX_GAIN
-                preference.value = bands[band].toInt()
-                preference.setOnPreferenceChangeListener { _, value ->
-                    DiracQemEffect.setBand(context, band, (value as Int).toFloat())
-                    true
-                }
+        findPreference<EqBoardPreference>(KEY_EQ_BOARD)?.let { board ->
+            board.onBandChanged = { band, value ->
+                DiracQemEffect.setBand(context, band, value)
+                findPreference<EqPreviewPreference>(KEY_EQ_PREVIEW)?.setBand(band, value)
             }
         }
+
+        refreshBands()
     }
 
     private fun refreshBands() {
         val bands = DiracQemEffect.currentBands(requireContext())
-        for (band in 0 until DiracPresets.EQ_BANDS) {
-            findPreference<SeekBarPreference>(KEY_BAND_PREFIX + band)?.value = bands[band].toInt()
-        }
+        findPreference<EqBoardPreference>(KEY_EQ_BOARD)?.setBands(bands)
+        findPreference<EqPreviewPreference>(KEY_EQ_PREVIEW)?.setBands(bands)
     }
 
-    companion object {
-        private const val KEY_ENABLED = "dirac_enable"
-        private const val KEY_MODEL = "dirac_model"
-        private const val KEY_STYLE = "dirac_style"
-        private const val KEY_BAND_PREFIX = "dirac_eq_"
-        private const val MIN_GAIN = -6
-        private const val MAX_GAIN = 6
+    private companion object {
+        const val KEY_ENABLED = "dirac_enable"
+        const val KEY_MODEL = "dirac_model"
+        const val KEY_STYLE = "dirac_style"
+        const val KEY_EQ_PREVIEW = "dirac_eq_preview"
+        const val KEY_EQ_BOARD = "dirac_eq_board"
     }
 }
