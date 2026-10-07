@@ -66,6 +66,17 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
         refreshBands()
     }
 
+    /**
+     * The stored preference is the single source of truth, so re-apply it when
+     * the page opens: if the app data was reset while the HAL kept a
+     * persistent calibration, this brings the engine back in line with the
+     * switch instead of leaving the UI and the audio disagreeing.
+     */
+    override fun onResume() {
+        super.onResume()
+        DiracQemEffect.apply(requireContext())
+    }
+
     private fun refreshBands() {
         val bands = DiracQemEffect.currentBands(requireContext())
         findPreference<EqBoardPreference>(KEY_EQ_BOARD)?.setBands(bands)
