@@ -53,9 +53,9 @@ class VerticalSlider @JvmOverloads constructor(
     private val detentPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     private val trackColors: ColorStateList
-    private val activeColors: ColorStateList
-    private val thumbColors: ColorStateList
     private val haloColors: ColorStateList
+
+    private val accent = resolveAccent(context)
 
     private val density = resources.displayMetrics.density
     private val trackWidth: Float
@@ -86,16 +86,12 @@ class VerticalSlider @JvmOverloads constructor(
         val ta = context.obtainStyledAttributes(
             attrs,
             intArrayOf(
-                com.google.android.material.R.attr.trackColorActive,
                 com.google.android.material.R.attr.trackColorInactive,
-                com.google.android.material.R.attr.thumbColor,
                 com.google.android.material.R.attr.haloColor,
             ),
         )
-        activeColors = ta.getColorStateList(0) ?: ColorStateList.valueOf(0xFFFFFFFF.toInt())
-        trackColors = ta.getColorStateList(1) ?: ColorStateList.valueOf(0x33FFFFFF)
-        thumbColors = ta.getColorStateList(2) ?: activeColors
-        haloColors = ta.getColorStateList(3) ?: ColorStateList.valueOf(0x33FFFFFF)
+        trackColors = ta.getColorStateList(0) ?: ColorStateList.valueOf(0x26FFFFFF)
+        haloColors = ta.getColorStateList(1) ?: ColorStateList.valueOf(0x33FFFFFF)
         ta.recycle()
 
         isClickable = true
@@ -148,7 +144,10 @@ class VerticalSlider @JvmOverloads constructor(
         canvas.drawRect(cx - 8f * density, zeroY - density, cx + 8f * density, zeroY + density, detentPaint)
 
         val valueY = yForValue(value)
-        activePaint.color = activeColors.getColorForState(drawableState, activeColors.defaultColor)
+        // Head brighter than trail, trail brighter than track: the thumb is the
+        // full accent, like the response curve's line, and the trail is the
+        // accent dimmed, like that curve's translucent fill.
+        activePaint.color = accent and 0x59FFFFFF
         canvas.drawRoundRect(
             cx - half, minOf(zeroY, valueY), cx + half, maxOf(zeroY, valueY), half, half, activePaint,
         )
@@ -158,12 +157,23 @@ class VerticalSlider @JvmOverloads constructor(
             canvas.drawCircle(cx, valueY, haloRadius, haloPaint)
         }
 
-        thumbPaint.color = thumbColors.getColorForState(drawableState, thumbColors.defaultColor)
+        thumbPaint.color = accent
         canvas.drawRoundRect(
             cx - barWidth / 2f, valueY - barHeight / 2f,
             cx + barWidth / 2f, valueY + barHeight / 2f,
             barWidth / 2f, barWidth / 2f, thumbPaint,
         )
+    }
+
+    /**
+     * Reads the theme accent as a colour. The attribute can resolve to a colour
+     * state list, so it has to go through getColor instead of TypedValue.data.
+     */
+    private fun resolveAccent(context: Context): Int {
+        val typed = context.obtainStyledAttributes(intArrayOf(android.R.attr.colorAccent))
+        val color = typed.getColor(0, 0)
+        typed.recycle()
+        return if (color != 0) color else 0xFF8AB4F8.toInt()
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
