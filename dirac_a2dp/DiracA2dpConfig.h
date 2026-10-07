@@ -25,9 +25,11 @@
 // software path never reaches the ADSP, so the host effect reads the same
 // state from a world-readable file and applies the same seven gains.
 //
-// Parity scope: the seven user-EQ gains and the enable/bypass flag only. The
-// Dirac DAR device correction, the HDSOUND filter index and the limiter chain
-// are not reproduced.
+// Parity scope: the seven-band high-level curve (0x12d36) and the
+// enable/bypass flag. The module's separate low-level 80-byte filter bank
+// (param 0x12d00) is zeroed in this ROM's ACDB and is never driven by the app,
+// and the DAR correction, the HDSOUND filter index and the limiter chain are
+// not reproduced.
 class DiracA2dpConfig {
   public:
     static constexpr size_t kBandCount = 7;

@@ -24,12 +24,27 @@
 
 // Host-side A2DP curve with Dirac-QEM parity.
 //
-// One peaking biquad per Dirac band centre (68/165/400/972/2000/6000/14000 Hz)
-// carrying the same half-dB gains the QEM app pushes as PARAM_EQ_BANDS
-// (0x12D36), plus a headroom preamp that only reduces the level when a band
-// boosts. The Dirac DAR device correction, the HDSOUND filter index and the
-// limiter chain are not reproduced, so this is a parity of the user EQ, not of
-// the wired-route sound.
+// The Dirac CAPIv2 module (0x12d00 ipowersound / 0x12d01 eheadset) exposes two
+// independent EQ surfaces: a low-level 80-byte bank (param 0x12d00, ten
+// filters of {enable, fchz, gaindb, q}) and a high-level seven-float band
+// curve (param 0x12d36). The QEM app drives only 0x12d36, and this ROM's ACDB
+// defaults the bank to all-zero, so the audible user EQ is the seven-band
+// curve: seven peaking bands at 68/165/400/972/2000/6000/14000 Hz.
+//
+// The band shape is the Dirac equalizer's own model: the app's EqCurveView
+// reduces each band to the small-signal limit of the RBJ peaking response, a
+// rational Lorentzian in (cos w - cos w0), and builds it with
+// alpha = sin(w0)/2. In RBJ terms alpha = sin(w0)/(2Q), so the Dirac bands are
+// Q = 1.0, which is exactly what the chain below uses. It is therefore the
+// same second-order peaking bank, at the same centres and the same Q, in the
+// same low-to-high order.
+//
+// Not reproduced, and not observable from the shipped blobs: the 10-filter
+// bank (the DAR device correction and the stock voicing presets, zeroed in
+// this MTP cal set), the module's Input/Output HP fchz rumble filters (also
+// zeroed), the HDSOUND filter index (its data lives in diracvdd.bin), and the
+// pslimiter/safelimiter/timedomainlimiter chain. The preamp below is a static
+// headroom stand-in for those limiters, not a limiter.
 class DiracA2dpVoicing {
   public:
     static constexpr size_t kBandCount = 7;

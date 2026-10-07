@@ -22,8 +22,10 @@
 
 namespace {
 
-// The QEM bands are octave-spaced-ish graphic bands, so a peaking Q of 1.0
-// keeps each band local to its centre without overlapping into its neighbours.
+// The Dirac equalizer models each band with alpha = sin(w0)/2 (the app's
+// EqCurveView "halfAlpha"), which is the RBJ peaking response at Q = 1.0.
+// Matching that Q, not just the centre, is what makes this the same band shape
+// the module's 0x12d36 curve asks for.
 constexpr double kBandQ = 1.0;
 
 double HalfDbToDb(int halfDb) {
