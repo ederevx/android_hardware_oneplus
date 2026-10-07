@@ -19,6 +19,8 @@ android_app {
         "SettingsLibSettingsTheme",
         "androidx.appcompat_appcompat",
         "androidx.preference_preference",
+        // Material slider attrs the vertical EQ slider reads.
+        "com.google.android.material_material",
     ],
 
     optimize: {
