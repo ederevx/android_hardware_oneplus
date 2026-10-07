@@ -28,6 +28,8 @@ class DiracQemSettingsActivity :
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // The registration the effect needs, for the boot before its receiver runs.
+        DiracRouteService.start(this)
         if (savedInstanceState == null) {
             supportFragmentManager.beginTransaction()
                 .replace(R.id.content_frame, DiracQemSettingsFragment())

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<config>
+    <!-- Keeps DiracRouteService out of the app-idle service stop, so the
+         registered-only jack broadcast keeps being heard. -->
+    <allow-in-power-save package="org.lineageos.dirac.qem" />
+</config>

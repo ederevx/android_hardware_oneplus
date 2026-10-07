@@ -20,10 +20,14 @@ import android.bluetooth.BluetoothProfile
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 
 /**
  * Tracks the output route and the movie-mode state the stock OnePlus Dirac
  * service also reacts to.
+ *
+ * [DiracRouteService] owns the runtime registration the jack event needs; this
+ * class stays the single owner of the action list.
  */
 class DiracStateReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -43,7 +47,13 @@ class DiracStateReceiver : BroadcastReceiver() {
         }
     }
 
-    private companion object {
+    companion object {
+        fun intentFilter(): IntentFilter = IntentFilter().apply {
+            addAction(Intent.ACTION_HEADSET_PLUG)
+            addAction(ACTION_A2DP_CONNECTION_STATE_CHANGED)
+            addAction(ACTION_MOVIES_STATE_CHANGED)
+        }
+
         const val ACTION_A2DP_CONNECTION_STATE_CHANGED =
             "android.bluetooth.a2dp.profile.action.CONNECTION_STATE_CHANGED"
         const val EXTRA_A2DP_STATE = "android.bluetooth.profile.extra.STATE"

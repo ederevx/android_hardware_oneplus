@@ -22,8 +22,11 @@ import android.content.Intent
 
 class BootCompletedReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == Intent.ACTION_LOCKED_BOOT_COMPLETED) {
-            DiracQemEffect.apply(context)
+        when (intent.action) {
+            // Before unlock the effect can be driven directly, and after unlock
+            // the route needs the process that hears the jack event.
+            Intent.ACTION_LOCKED_BOOT_COMPLETED -> DiracQemEffect.apply(context)
+            Intent.ACTION_BOOT_COMPLETED -> DiracRouteService.start(context)
         }
     }
 }
