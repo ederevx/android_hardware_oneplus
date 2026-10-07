@@ -89,10 +89,13 @@ class EqCurveView @JvmOverloads constructor(
             return
         }
 
+        // Keep the graph inset from the card even if the row padding was
+        // replaced while binding, so the grid never sits on the rounded edge.
+        val inset = (16f * density).toInt()
         val left = paddingLeft.toFloat()
         val right = (width - paddingRight).toFloat()
-        val top = paddingTop.toFloat()
-        val bottom = (height - paddingBottom).toFloat()
+        val top = maxOf(paddingTop, inset).toFloat()
+        val bottom = (height - maxOf(paddingBottom, inset)).toFloat()
         val spanX = right - left
         val spanY = bottom - top
         if (spanX <= 0f || spanY <= 0f) {
