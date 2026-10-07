@@ -25,8 +25,11 @@
             </intent-filter>
         </receiver>
 
+        <!-- exported so the protected HEADSET_PLUG broadcast the system
+             server sends is actually delivered; a non-exported manifest
+             receiver can be skipped for that system broadcast. -->
         <receiver android:name=".DiracStateReceiver"
-                  android:exported="false">
+                  android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.HEADSET_PLUG" />
                 <action android:name="android.bluetooth.a2dp.profile.action.CONNECTION_STATE_CHANGED" />
