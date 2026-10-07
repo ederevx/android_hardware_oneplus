@@ -51,12 +51,31 @@ class QemFrames(context: Context) {
         module: Int = MODULE_INTERNAL,
         param: Int = PARAM_ENABLE,
         value: Int = ENABLE,
+    ) = sendRaw(topo, appType, sndDevId, sampleRate, calType, persist, module, param,
+        intPayload(value), "value=$value")
+
+    /**
+     * Sends one frame with an explicit payload, so a multi-byte parameter such
+     * as the 28-byte 0x12D36 filter/coefficient blob can be expressed. [label]
+     * only annotates the log line.
+     */
+    fun sendRaw(
+        topo: Int,
+        appType: Int,
+        sndDevId: Int,
+        sampleRate: Int,
+        calType: Int,
+        persist: Int,
+        module: Int,
+        param: Int,
+        payload: ByteArray,
+        label: String = "",
     ) {
-        val frame = frame(module, param, intPayload(value))
+        val frame = frame(module, param, payload)
         val string = setString(topo, appType, persist, sndDevId, sampleRate, frame, calType)
         Log.i(TAG, "send cal_snddev=$sndDevId topo=0x${hex(topo)} apptype=$appType " +
             "caltype=$calType persist=$persist rate=$sampleRate module=0x${hex(module)} " +
-            "param=0x${hex(param)} value=$value data=${frame.size}B")
+            "param=0x${hex(param)} $label data=${frame.size}B")
         audioManager.setParameters(string)
     }
 

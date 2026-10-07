@@ -46,7 +46,10 @@ import android.util.Log
  * module; the headset topology 0x10012d01 instantiates 0x12D01), param
  * (0x12D01), value (1), params (a comma list of `param` or `param=value`
  * entries, hex or decimal, all sent in sequence into the one held stream,
- * e.g. module=0x12D01 params="0x12d01=1,0x12d03=3,0x12d04=3"), delay ms
+ * e.g. module=0x12D01 params="0x12d01=1,0x12d03=3,0x12d04=3"), rawparam
+ * (0x12D36) plus raw (a hex byte string, e.g. the 28-byte 0x12D36 filter blob
+ * "000080c000000040000000c000000000000000c0000000c0000080c0") sent as one
+ * extra frame per combo, delay ms
  * before the first frame (2000), gap ms between topo/device combos (1200),
  * seqgap ms between the params of one combo (150), freq Hz (1000). The long
  * names durationMs/delayMs/gapMs/sndDevIds/appType/sampleRate/frequencyHz are
@@ -99,6 +102,22 @@ class ToneProbeActivity : Activity() {
                             Thread.sleep(request.seqGapMs)
                         }
                     }
+                    request.raw?.let { payload ->
+                        Log.i(TAG, "raw topo=0x${Integer.toHexString(topo)} snddev=$devId" +
+                            " module=0x${Integer.toHexString(request.module)}" +
+                            " param=0x${Integer.toHexString(request.rawParam)} bytes=${payload.size}")
+                        frames.sendRaw(
+                            topo = topo,
+                            appType = request.appType,
+                            sndDevId = devId,
+                            sampleRate = request.sampleRate,
+                            calType = request.calType,
+                            persist = request.persist,
+                            module = request.module,
+                            param = request.rawParam,
+                            payload = payload,
+                        )
+                    }
                     Thread.sleep(request.gapMs)
                 }
             }
@@ -132,6 +151,8 @@ class ToneProbeActivity : Activity() {
         val values: List<Int>,
         val seqGapMs: Long,
         val frequencyHz: Int,
+        val rawParam: Int,
+        val raw: ByteArray?,
     ) {
         companion object {
             fun from(intent: Intent?, defaultSndDevId: Int): Request {
@@ -164,6 +185,8 @@ class ToneProbeActivity : Activity() {
                         .coerceAtLeast(0).toLong(),
                     frequencyHz = intExtra(intent, EXTRA_FREQ, EXTRA_FREQUENCY,
                         default = DEFAULT_FREQ),
+                    rawParam = intExtra(intent, EXTRA_RAWPARAM, default = DEFAULT_RAWPARAM),
+                    raw = hexBytes(stringExtra(intent, EXTRA_RAW)),
                 )
             }
 
@@ -218,6 +241,18 @@ class ToneProbeActivity : Activity() {
                 }.getOrNull()
             }
 
+            /** Decodes a hex byte string, tolerating 0x prefixes and separators. */
+            private fun hexBytes(raw: String?): ByteArray? {
+                val cleaned = raw.orEmpty().replace("0x", "", ignoreCase = true)
+                    .replace(Regex("[^0-9a-fA-F]"), "")
+                if (cleaned.isEmpty() || cleaned.length % 2 != 0) {
+                    return null
+                }
+                return ByteArray(cleaned.length / 2) { i ->
+                    cleaned.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+                }
+            }
+
             private const val EXTRA_DURATION = "duration"
             private const val EXTRA_DURATION_MS = "durationMs"
             private const val EXTRA_DELAY = "delay"
@@ -240,6 +275,8 @@ class ToneProbeActivity : Activity() {
             private const val EXTRA_SEQGAP = "seqgap"
             private const val EXTRA_FREQ = "freq"
             private const val EXTRA_FREQUENCY = "frequencyHz"
+            private const val EXTRA_RAWPARAM = "rawparam"
+            private const val EXTRA_RAW = "raw"
 
             private const val DEFAULT_DURATION = 60
             private const val MIN_DURATION = 5
@@ -251,6 +288,7 @@ class ToneProbeActivity : Activity() {
             private const val DEFAULT_PERSIST = 0
             private const val DEFAULT_SEQGAP = 150
             private const val DEFAULT_FREQ = 1000
+            private const val DEFAULT_RAWPARAM = 0x12D36
             private val DEFAULT_TOPOS = listOf(0x10012D00, 0x10012D01, 0x10312)
         }
     }
