@@ -9,6 +9,9 @@ android_app {
     system_ext_specific: true,
     privileged: true,
 
+    // This app owns the on-device Dirac equalizer, so it replaces AudioFX.
+    overrides: ["AudioFX"],
+
     // Only the widgets and the theme the screen uses.
     static_libs: [
         "SettingsLibCollapsingToolbarBaseActivity",
