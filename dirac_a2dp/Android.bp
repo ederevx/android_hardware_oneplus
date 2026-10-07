@@ -1,0 +1,39 @@
+// Host-side voicing for the Bluetooth A2DP output.
+//
+// Dirac is an ADSP module on this platform, registered for the headset and the
+// speaker only, and the A2DP software path never enters the ADM, so the DSP
+// never processes Bluetooth audio. Voice the A2DP output on the host instead.
+//
+// Legacy soundfx library, not an AIDL effect service: the effects HAL on this
+// device is android.hardware.audio.effect@6.0, which loads soundfx shared
+// libraries.
+cc_library_shared {
+    name: "libdirac_a2dp",
+
+    owner: "oneplus",
+    vendor: true,
+    relative_install_path: "soundfx",
+
+    srcs: [
+        "Biquad.cpp",
+        "DiracA2dpConfig.cpp",
+        "DiracA2dpVoicing.cpp",
+        "EffectDiracA2dp.cpp",
+    ],
+
+    header_libs: [
+        "libaudio_system_headers",
+        "libhardware_headers",
+    ],
+
+    shared_libs: [
+        "libcutils",
+        "liblog",
+    ],
+
+    cflags: [
+        "-Wall",
+        "-Werror",
+        "-fvisibility=hidden",
+    ],
+}
