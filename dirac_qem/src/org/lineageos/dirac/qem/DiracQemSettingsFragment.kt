@@ -60,6 +60,10 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
             board.onBandChanged = { band, value ->
                 DiracQemEffect.setBand(context, band, value)
                 findPreference<EqPreviewPreference>(KEY_EQ_PREVIEW)?.setBand(band, value)
+                // A manual band edit is exactly what the custom preset means,
+                // so the preset row must follow it.
+                findPreference<ListPreference>(KEY_STYLE)?.value =
+                    DiracPresets.STYLE_CUSTOM.toString()
             }
         }
 
