@@ -36,6 +36,8 @@ object DiracQemEffect {
     private const val PREFS = "dirac_qem"
     private const val KEY_ENABLED = "enabled"
     private const val KEY_OUTPUT = "output"
+
+    /** Bitmask of the routes the app has left enabled: 1 internal, 2 external. */
     private const val KEY_APPLIED = "applied"
     private const val KEY_STYLE = "style"
     private const val KEY_CUSTOM = "custom"
@@ -127,17 +129,11 @@ object DiracQemEffect {
     }
 
     /**
-     * Switch routes. The old route's module is explicitly disabled so it does
-     * not stay enabled when the headset is unplugged, then the new route's
-     * current state is applied.
+     * Switch routes. [apply] turns the previous route's module off before it
+     * turns the current one on, so this only has to record the new route.
      */
     fun setOutput(context: Context, output: Int) {
         prefs(context).edit().putInt(KEY_OUTPUT, output).apply()
-        val current = output(context)
-        val applied = prefs(context).getInt(KEY_APPLIED, OUTPUT_INTERNAL)
-        if (applied != current) {
-            sendDisable(context, applied)
-        }
         apply(context)
     }
 
@@ -160,28 +156,59 @@ object DiracQemEffect {
             QemProtocol.PARAM_SCALAR_BASE + key, payload, sndDevIdFor(output))
     }
 
+    /**
+     * Pushes the stored state to the audio layer. The route is resolved once so
+     * that every frame of a pass addresses the same module, and the disable
+     * path never follows the route resolved here: it turns off the module the
+     * enable path actually turned on, which is not necessarily the current one
+     * (the headset can be unplugged between the two passes).
+     */
     fun apply(context: Context) {
-        val output = output(context)
+        val route = output(context)
+        val applied = appliedRoutes(context)
         if (!isEnabled(context)) {
-            sendOp(context, QemProtocol.PARAM_ENABLE, QemProtocol.intPayload(0))
-            markApplied(context, output)
+            // Clear every route the app enabled. An empty record means the app
+            // state was reset while the audio layer kept a calibration, so both
+            // modules are cleared rather than trusting the record.
+            if (applied == 0) {
+                sendDisable(context, OUTPUT_INTERNAL)
+                sendDisable(context, OUTPUT_EXTERNAL)
+            } else {
+                for (candidate in 0..1) {
+                    if (applied and routeBit(candidate) != 0) {
+                        sendDisable(context, candidate)
+                    }
+                }
+            }
+            setAppliedRoutes(context, 0)
             return
         }
-        val bands = currentBands(context)
-        sendOp(context, QemProtocol.PARAM_ENABLE, QemProtocol.intPayload(1))
-        sendOp(context, QemProtocol.PARAM_EQ_ENABLE, QemProtocol.intPayload(1))
-        sendOp(context, QemProtocol.PARAM_EQ_BANDS, QemProtocol.floatArrayPayload(bands))
-        sendOp(context, QemProtocol.PARAM_SFX_ENABLE, QemProtocol.intPayload(1))
-        if (output == OUTPUT_EXTERNAL) {
-            sendOp(context, QemProtocol.PARAM_HDSOUND_ENABLE, QemProtocol.intPayload(1))
-            val index = DiracPresets.MODEL_FILTER_INDEX[model(context)]
-            sendOp(context, QemProtocol.PARAM_HDSOUND_FILTERIDX, QemProtocol.intPayload(index))
+
+        // Only the route being driven may stay enabled, so clear the other one
+        // before enabling this one.
+        for (candidate in 0..1) {
+            if (candidate != route) {
+                sendDisable(context, candidate)
+            }
         }
-        markApplied(context, output)
+        sendEnable(context, route)
+        setAppliedRoutes(context, routeBit(route))
     }
 
-    private fun sendOp(context: Context, param: Int, payload: ByteArray) {
-        val output = output(context)
+    private fun sendEnable(context: Context, output: Int) {
+        val bands = currentBands(context)
+        sendOp(context, output, QemProtocol.PARAM_ENABLE, QemProtocol.intPayload(1))
+        sendOp(context, output, QemProtocol.PARAM_EQ_ENABLE, QemProtocol.intPayload(1))
+        sendOp(context, output, QemProtocol.PARAM_EQ_BANDS, QemProtocol.floatArrayPayload(bands))
+        sendOp(context, output, QemProtocol.PARAM_SFX_ENABLE, QemProtocol.intPayload(1))
+        if (output == OUTPUT_EXTERNAL) {
+            sendOp(context, output, QemProtocol.PARAM_HDSOUND_ENABLE, QemProtocol.intPayload(1))
+            val index = DiracPresets.MODEL_FILTER_INDEX[model(context)]
+            sendOp(context, output, QemProtocol.PARAM_HDSOUND_FILTERIDX, QemProtocol.intPayload(index))
+        }
+    }
+
+    private fun sendOp(context: Context, output: Int, param: Int, payload: ByteArray) {
         QemTransport(context).send(
             moduleFor(output), topoFor(output), devicesFor(output), param, payload,
             sndDevIdFor(output))
@@ -193,9 +220,13 @@ object DiracQemEffect {
             QemProtocol.PARAM_ENABLE, QemProtocol.intPayload(0), sndDevIdFor(output))
     }
 
-    private fun markApplied(context: Context, output: Int) {
-        prefs(context).edit().putInt(KEY_APPLIED, output).apply()
+    private fun appliedRoutes(context: Context): Int = prefs(context).getInt(KEY_APPLIED, 0)
+
+    private fun setAppliedRoutes(context: Context, routes: Int) {
+        prefs(context).edit().putInt(KEY_APPLIED, routes).apply()
     }
+
+    private fun routeBit(output: Int): Int = 1 shl output
 
     private fun moduleFor(output: Int): Int =
         if (output == OUTPUT_EXTERNAL) QemProtocol.MODULE_EXTERNAL else QemProtocol.MODULE_INTERNAL
