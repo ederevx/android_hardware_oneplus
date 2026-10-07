@@ -48,13 +48,15 @@ class QemFrames(context: Context) {
         sampleRate: Int,
         calType: Int = CAL_TYPE_POPP,
         persist: Int = 0,
+        module: Int = MODULE_INTERNAL,
         param: Int = PARAM_ENABLE,
+        value: Int = ENABLE,
     ) {
-        val frame = frame(MODULE_INTERNAL, param, enablePayload())
+        val frame = frame(module, param, intPayload(value))
         val string = setString(topo, appType, persist, sndDevId, sampleRate, frame, calType)
         Log.i(TAG, "send cal_snddev=$sndDevId topo=0x${hex(topo)} apptype=$appType " +
-            "caltype=$calType persist=$persist rate=$sampleRate param=0x${hex(param)} " +
-            "data=${frame.size}B")
+            "caltype=$calType persist=$persist rate=$sampleRate module=0x${hex(module)} " +
+            "param=0x${hex(param)} value=$value data=${frame.size}B")
         audioManager.setParameters(string)
     }
 
@@ -69,8 +71,8 @@ class QemFrames(context: Context) {
             .put(payload)
             .array()
 
-    private fun enablePayload(): ByteArray =
-        ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(ENABLE).array()
+    private fun intPayload(value: Int): ByteArray =
+        ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(value).array()
 
     /**
      * Base64 stays padded ('=') because the HAL decodes cal_data with the strict
@@ -95,9 +97,11 @@ class QemFrames(context: Context) {
         const val CAL_TYPE_POPP = 1
         const val PARAM_ENABLE = 0x12D01
 
+        /** Default module: the speaker topology instantiates 0x12D00. */
+        const val MODULE_INTERNAL = 0x12D00
+        const val ENABLE = 1
+
         private const val TAG = "DiracToneProbe"
-        private const val MODULE_INTERNAL = 0x12D00
-        private const val ENABLE = 1
         private const val HEADER_SIZE = 12
     }
 }
