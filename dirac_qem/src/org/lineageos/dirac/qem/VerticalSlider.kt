@@ -26,7 +26,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -174,7 +173,7 @@ class VerticalSlider @JvmOverloads constructor(
                 // A drag that starts on a bar belongs to the bar, so the list
                 // must not steal it to scroll. A touch off the bars is left
                 // alone, so the page still scrolls normally.
-                if (!isWithinBar(event.x, event.y)) {
+                if (!isWithinBar(event.y)) {
                     return false
                 }
                 dragging = true
@@ -204,14 +203,13 @@ class VerticalSlider @JvmOverloads constructor(
     }
 
     /**
-     * A generous hit area around the track: the bar is thin, so the whole
-     * slider width counts, extended vertically by the thumb and a margin.
+     * A generous hit area around the track: the whole slider width counts, and
+     * the track is extended vertically by the thumb and a margin.
      */
-    private fun isWithinBar(x: Float, y: Float): Boolean {
-        val halfWidth = 16f * density
+    private fun isWithinBar(y: Float): Boolean {
         val top = trackTop() - barHeight / 2f - 8f * density
         val bottom = trackBottom() + barHeight / 2f + 8f * density
-        return abs(x - width / 2f) <= halfWidth && y >= top && y <= bottom
+        return y >= top && y <= bottom
     }
 
     private fun updateFromY(y: Float) {

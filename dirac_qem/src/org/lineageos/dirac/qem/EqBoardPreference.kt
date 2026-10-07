@@ -52,8 +52,10 @@ class EqBoardPreference @JvmOverloads constructor(
     override fun onBindViewHolder(holder: PreferenceViewHolder) {
         super.onBindViewHolder(holder)
         if (!built) {
-            build(holder.itemView as ViewGroup)
-            built = true
+            holder.itemView.findViewById<ViewGroup>(R.id.dirac_eq_board_row)?.let {
+                build(it)
+                built = true
+            }
         }
         pendingBands?.let { applyBands(it) }
     }
@@ -74,14 +76,18 @@ class EqBoardPreference @JvmOverloads constructor(
                 gravity = Gravity.CENTER
                 textSize = 12f
                 text = formatDb(0f)
+                setPadding(0, 0, 0, (6 * density).toInt())
             }
             val slider = VerticalSlider(sliderContext).apply {
                 layoutParams = LinearLayout.LayoutParams(
-                    (48 * density).toInt(), (200 * density).toInt(),
+                    ViewGroup.LayoutParams.MATCH_PARENT, (200 * density).toInt(),
                 )
                 onValueChanged = { value ->
                     valueText.text = formatDb(value)
                     if (!updating) {
+                        // Keep the cached bands in step so a rebind does not
+                        // snap the bar back to the values it was bound with.
+                        pendingBands?.set(band, value)
                         onBandChanged?.invoke(band, value)
                     }
                 }
@@ -90,6 +96,7 @@ class EqBoardPreference @JvmOverloads constructor(
                 gravity = Gravity.CENTER
                 textSize = 12f
                 text = BAND_LABELS[band]
+                setPadding(0, (6 * density).toInt(), 0, 0)
             }
             column.addView(valueText)
             column.addView(slider)
