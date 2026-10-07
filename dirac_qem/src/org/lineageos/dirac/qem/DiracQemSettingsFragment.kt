@@ -18,11 +18,15 @@ package org.lineageos.dirac.qem
 
 import android.os.Bundle
 import androidx.preference.ListPreference
-import androidx.preference.PreferenceFragmentCompat
-import androidx.preference.SeekBarPreference
 import com.android.settingslib.widget.MainSwitchPreference
+import com.android.settingslib.widget.SettingsBasePreferenceFragment
 
-class DiracQemSettingsFragment : PreferenceFragmentCompat() {
+/**
+ * Extends the Settings fragment so the expressive preference group adapter is
+ * used: that adapter is what gives every row its card surface and its section
+ * grouping, so no row needs a hand-drawn background.
+ */
+class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
         addPreferencesFromResource(R.xml.dirac_settings)
         val context = requireContext()
@@ -52,33 +56,42 @@ class DiracQemSettingsFragment : PreferenceFragmentCompat() {
             }
         }
 
-        val bands = DiracQemEffect.currentBands(context)
-        for (band in 0 until DiracPresets.EQ_BANDS) {
-            findPreference<SeekBarPreference>(KEY_BAND_PREFIX + band)?.let { preference ->
-                preference.min = MIN_GAIN
-                preference.max = MAX_GAIN
-                preference.value = bands[band].toInt()
-                preference.setOnPreferenceChangeListener { _, value ->
-                    DiracQemEffect.setBand(context, band, (value as Int).toFloat())
-                    true
-                }
+        findPreference<EqBoardPreference>(KEY_EQ_BOARD)?.let { board ->
+            board.onBandChanged = { band, value ->
+                DiracQemEffect.setBand(context, band, value)
+                findPreference<EqPreviewPreference>(KEY_EQ_PREVIEW)?.refresh()
+                // A manual band edit is exactly what the custom preset means,
+                // so the preset row must follow it.
+                findPreference<ListPreference>(KEY_STYLE)?.value =
+                    DiracPresets.STYLE_CUSTOM.toString()
             }
         }
+
+        refreshBands()
+    }
+
+    /**
+     * The stored preference is the single source of truth, so re-apply it when
+     * the page opens: if the app data was reset while the HAL kept a
+     * persistent calibration, this brings the engine back in line with the
+     * switch instead of leaving the UI and the audio disagreeing.
+     */
+    override fun onResume() {
+        super.onResume()
+        DiracQemEffect.apply(requireContext())
     }
 
     private fun refreshBands() {
         val bands = DiracQemEffect.currentBands(requireContext())
-        for (band in 0 until DiracPresets.EQ_BANDS) {
-            findPreference<SeekBarPreference>(KEY_BAND_PREFIX + band)?.value = bands[band].toInt()
-        }
+        findPreference<EqBoardPreference>(KEY_EQ_BOARD)?.setBands(bands)
+        findPreference<EqPreviewPreference>(KEY_EQ_PREVIEW)?.refresh()
     }
 
-    companion object {
-        private const val KEY_ENABLED = "dirac_enable"
-        private const val KEY_MODEL = "dirac_model"
-        private const val KEY_STYLE = "dirac_style"
-        private const val KEY_BAND_PREFIX = "dirac_eq_"
-        private const val MIN_GAIN = -6
-        private const val MAX_GAIN = 6
+    private companion object {
+        const val KEY_ENABLED = "dirac_enable"
+        const val KEY_MODEL = "dirac_model"
+        const val KEY_STYLE = "dirac_style"
+        const val KEY_EQ_PREVIEW = "dirac_eq_preview"
+        const val KEY_EQ_BOARD = "dirac_eq_board"
     }
 }

@@ -41,6 +41,12 @@ object DiracPresets {
     const val STYLE_CUSTOM = 1
     const val EQ_BANDS = 7
 
+    /**
+     * Centre frequency of each Dirac band, in Hz, in the order the band gains
+     * are stored. Used to evaluate the real response shape of the bands.
+     */
+    val BAND_FREQS = floatArrayOf(68f, 165f, 400f, 972f, 2_000f, 6_000f, 14_000f)
+
     private val PRESET_VALUES = arrayOf(
         "0.0;0.0;0.0;0.0;0.0;0.0;0.0",
         "0.0;-3.0;-5.0;0.0;0.0;-3.0;0.0",

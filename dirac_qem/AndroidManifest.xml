@@ -12,8 +12,7 @@
     <application
         android:label="OnePlusDiracQem"
         android:icon="@drawable/ic_dirac"
-        android:theme="@style/Theme.SubSettingsBase"
-        android:persistent="true"
+        android:theme="@style/Theme.SubSettingsBase.Expressive"
         android:defaultToDeviceProtectedStorage="true"
         android:directBootAware="true">
 
@@ -58,9 +57,17 @@
             <meta-data
                 android:name="com.android.settings.category"
                 android:value="com.android.settings.category.ia.sound" />
+            <!-- Match the neighbouring Audio rows: no icon, a summary line, and
+                 placement inside the Audio section; order is its position knob. -->
             <meta-data
-                android:name="com.android.settings.icon"
-                android:resource="@drawable/ic_dirac" />
+                android:name="com.android.settings.summary"
+                android:resource="@string/dirac_enable_summary" />
+            <meta-data
+                android:name="com.android.settings.group_key"
+                android:value="audio_category" />
+            <meta-data
+                android:name="com.android.settings.order"
+                android:value="-90" />
         </activity>
     </application>
 </manifest>
