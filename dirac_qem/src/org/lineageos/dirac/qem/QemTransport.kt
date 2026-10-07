@@ -24,6 +24,7 @@ import android.media.AudioManager
  * matching how the stock se.dirac.acs broadcasts a frame.
  */
 class QemTransport(context: Context) {
+    private val appContext = context.applicationContext
     private val audioManager = context.getSystemService(AudioManager::class.java)
 
     fun send(
@@ -38,13 +39,18 @@ class QemTransport(context: Context) {
         rates: IntArray = QemProtocol.SAMPLE_RATES,
     ): Int {
         val data = QemProtocol.frame(module, param, payload)
+        // Read per frame so a switch toggle is carried by the next push. On a
+        // build without the fallback the value is -1 and the key is omitted.
+        val fallback = DiracQemEffect.a2dpFallbackFlag(appContext)
         var frames = 0
         devices.forEach { device ->
             appTypes.forEach { appType ->
                 persistValues.forEach { persist ->
                     rates.forEach { rate ->
                         audioManager.setParameters(
-                            QemProtocol.setString(topo, appType, persist, device, sndDevId, rate, data)
+                            QemProtocol.setString(
+                                topo, appType, persist, device, sndDevId, rate, data, fallback
+                            )
                         )
                         frames++
                     }

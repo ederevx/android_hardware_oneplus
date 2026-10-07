@@ -79,27 +79,32 @@ const char *DiracA2dpConfig::ConfigPath() {
     return kConfigPath;
 }
 
-void DiracA2dpConfig::Fallback(int gainsHalfDb[kBandCount], bool *enabled) {
+void DiracA2dpConfig::Fallback(int gainsHalfDb[kBandCount], bool *enabled,
+                               bool *fallback) {
     for (size_t i = 0; i < kBandCount; ++i) {
         gainsHalfDb[i] = kFallbackGains[i];
     }
     if (enabled != nullptr) {
         *enabled = kFallbackEnabled;
     }
+    if (fallback != nullptr) {
+        *fallback = false;
+    }
 }
 
-bool DiracA2dpConfig::Load(int gainsHalfDb[kBandCount], bool *enabled) {
+bool DiracA2dpConfig::Load(int gainsHalfDb[kBandCount], bool *enabled, bool *fallback) {
     int gains[kBandCount];
     for (size_t i = 0; i < kBandCount; ++i) {
         gains[i] = kFallbackGains[i];
     }
     bool parsedEnabled = kFallbackEnabled;
+    bool parsedFallback = false;
     bool haveEnabled = false;
     bool haveBands = false;
 
     FILE *file = fopen(kConfigPath, "re");
     if (file == nullptr) {
-        Fallback(gainsHalfDb, enabled);
+        Fallback(gainsHalfDb, enabled, fallback);
         return false;
     }
 
@@ -120,6 +125,8 @@ bool DiracA2dpConfig::Load(int gainsHalfDb[kBandCount], bool *enabled) {
         if (strcmp(key, "enabled") == 0) {
             parsedEnabled = strtol(value, nullptr, 10) != 0;
             haveEnabled = true;
+        } else if (strcmp(key, "fallback") == 0) {
+            parsedFallback = strtol(value, nullptr, 10) != 0;
         } else if (strcmp(key, "bands") == 0) {
             haveBands = ParseBands(value, gains);
         }
@@ -131,6 +138,9 @@ bool DiracA2dpConfig::Load(int gainsHalfDb[kBandCount], bool *enabled) {
     }
     if (enabled != nullptr) {
         *enabled = parsedEnabled;
+    }
+    if (fallback != nullptr) {
+        *fallback = parsedFallback;
     }
     return haveEnabled && haveBands;
 }

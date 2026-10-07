@@ -44,11 +44,14 @@ class DiracA2dpConfig {
 
     // Reads the shared state file. On any failure (absent, unreadable,
     // malformed) both outputs are filled with the baked fallback preset and it
-    // returns false, so the effect stays standalone-testable.
-    static bool Load(int gainsHalfDb[kBandCount], bool *enabled);
+    // returns false, so the effect stays standalone-testable. `fallback` is the
+    // software-fallback switch and defaults OFF, so an A2DP stream is voiced
+    // only when the user has explicitly extended Dirac to it.
+    static bool Load(int gainsHalfDb[kBandCount], bool *enabled, bool *fallback);
 
-    // The baked preset used when the state file is not usable.
-    static void Fallback(int gainsHalfDb[kBandCount], bool *enabled);
+    // The baked preset used when the state file is not usable. `fallback` is
+    // always false here: the switch is opt-in, never a fallback default.
+    static void Fallback(int gainsHalfDb[kBandCount], bool *enabled, bool *fallback);
 
     static const char *ConfigPath();
 };

@@ -73,6 +73,22 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
             }
         }
 
+        // The A2DP fallback switch exists only when the build ships the
+        // dirac_a2dp effect. Absent that, the row is removed entirely: no dead
+        // preference, no listener, and nothing that would ever be pushed.
+        val fallback = findPreference<MainSwitchPreference>(KEY_A2DP_FALLBACK)
+        if (fallback != null) {
+            if (!DiracQemEffect.isA2dpFallbackAvailable(context)) {
+                preferenceScreen.removePreference(fallback)
+            } else {
+                fallback.isChecked = DiracQemEffect.isA2dpFallbackEnabled(context)
+                fallback.setOnPreferenceChangeListener { _, value ->
+                    DiracQemEffect.setA2dpFallback(context, value as Boolean)
+                    true
+                }
+            }
+        }
+
         findPreference<ListPreference>(KEY_MODEL)?.let { preference ->
             preference.value = DiracQemEffect.model(context).toString()
             preference.setOnPreferenceChangeListener { _, value ->
@@ -129,6 +145,7 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
 
     private companion object {
         const val KEY_ENABLED = "dirac_enable"
+        const val KEY_A2DP_FALLBACK = "dirac_a2dp_fallback"
         const val KEY_MODEL = "dirac_model"
         const val KEY_STYLE = "dirac_style"
         const val KEY_EQ_PREVIEW = "dirac_eq_preview"

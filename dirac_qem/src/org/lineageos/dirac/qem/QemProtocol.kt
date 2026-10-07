@@ -92,14 +92,20 @@ object QemProtocol {
         sndDevId: Int,
         sampleRate: Int,
         data: ByteArray,
+        fallback: Int = -1,
     ): String {
         val selectors = if (sndDevId > 0) {
             "cal_devid=0;cal_snddevid=$sndDevId"
         } else {
             "cal_devid=$device"
         }
+        // cal_diracfb rides the existing frame channel and is consumed by the
+        // HAL; it is omitted entirely (fallback < 0) on a build without the
+        // A2DP fallback effect, so nothing is sent for a consumer that is not
+        // there. It never reaches the DSP.
+        val fallbackKey = if (fallback >= 0) ";cal_diracfb=$fallback" else ""
         return "cal_caltype=0;cal_topoid=$topo;cal_apptype=$appType;cal_persist=$persist;" +
-            "$selectors;cal_samplerate=$sampleRate;cal_data=${encode(data)}"
+            "$selectors;cal_samplerate=$sampleRate$fallbackKey;cal_data=${encode(data)}"
     }
 
     private const val HEADER_SIZE = 12

@@ -7,6 +7,14 @@
         android:summary="@string/dirac_enable_summary"
         android:persistent="false" />
 
+    <!-- Added only when the build ships the dirac_a2dp effect; the fragment
+         removes it when config_dirac_a2dp_fallback_available is false. -->
+    <com.android.settingslib.widget.MainSwitchPreference
+        android:key="dirac_a2dp_fallback"
+        android:title="@string/dirac_a2dp_fallback_title"
+        android:summary="@string/dirac_a2dp_fallback_summary"
+        android:persistent="false" />
+
     <ListPreference
         android:key="dirac_model"
         android:title="@string/dirac_model_title"

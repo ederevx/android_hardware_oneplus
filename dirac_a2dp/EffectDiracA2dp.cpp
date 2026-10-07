@@ -69,6 +69,11 @@ typedef struct dirac_a2dp_object_s {
     // change from DiracA2dpConfig.
     int gainsHalfDb[DiracA2dpVoicing::kBandCount];
     bool diracEnabled;
+    // The software-fallback switch: the effect is a fallback for routes the
+    // HAL/DSP Dirac topology cannot reach, so it stays bypassed unless the
+    // user extends Dirac to them. Data source: DiracA2dpConfig, written only
+    // by the HAL; the effect never writes ACDB/cal or any DSP state.
+    bool fallback;
 
     // Built from the stream configuration; ready only for the sample formats
     // the voicing curve implements.
@@ -206,7 +211,7 @@ static int32_t DiracA2dp_Process(effect_handle_t self,
 
     // The device is read on every call rather than only when the command
     // arrives, so a device switch mid-stream takes effect on the next buffer.
-    if (!context->enabled || !context->diracEnabled ||
+    if (!context->enabled || !context->diracEnabled || !context->fallback ||
         !audio_is_a2dp_out_device(context->device) || !context->voicingReady) {
         DiracA2dp_PassThrough(context, inBuffer, outBuffer);
         return 0;
@@ -297,10 +302,10 @@ static int32_t DiracA2dp_Command(effect_handle_t self,
                 return -EINVAL;
             }
             const int fd = static_cast<int>(*reinterpret_cast<uint32_t *>(pCmdData));
-            dprintf(fd, "Dirac A2DP Voicing: state %u enabled %d dirac %d device %#x a2dp %d"
+            dprintf(fd, "Dirac A2DP Voicing: state %u enabled %d dirac %d fallback %d device %#x a2dp %d"
                     " gains=%d;%d;%d;%d;%d;%d;%d\n",
-                    context->state, context->enabled, context->diracEnabled, context->device,
-                    audio_is_a2dp_out_device(context->device),
+                    context->state, context->enabled, context->diracEnabled, context->fallback,
+                    context->device, audio_is_a2dp_out_device(context->device),
                     context->gainsHalfDb[0], context->gainsHalfDb[1], context->gainsHalfDb[2],
                     context->gainsHalfDb[3], context->gainsHalfDb[4], context->gainsHalfDb[5],
                     context->gainsHalfDb[6]);
@@ -407,7 +412,7 @@ static void DiracA2dp_ReloadConfig(dirac_a2dp_object_t *context) {
     if (!context->configured) {
         return;
     }
-    DiracA2dpConfig::Load(context->gainsHalfDb, &context->diracEnabled);
+    DiracA2dpConfig::Load(context->gainsHalfDb, &context->diracEnabled, &context->fallback);
 
     const audio_format_t format =
             static_cast<audio_format_t>(context->config.inputCfg.format);
@@ -427,8 +432,10 @@ static int DiracA2dp_Init(dirac_a2dp_module_t *module) {
     module->context.state = DIRAC_A2DP_STATE_INITIALIZED;
     module->context.configured = false;
     module->context.enabled = false;
+    module->context.fallback = false;
     module->context.device = AUDIO_DEVICE_NONE;
-    DiracA2dpConfig::Fallback(module->context.gainsHalfDb, &module->context.diracEnabled);
+    DiracA2dpConfig::Fallback(module->context.gainsHalfDb, &module->context.diracEnabled,
+                              &module->context.fallback);
 
     DiracA2dp_Reset(&module->context);
     return 0;
@@ -455,7 +462,7 @@ static int DiracA2dp_Configure(dirac_a2dp_module_t *module, const effect_config_
             static_cast<unsigned>(audio_channel_count_from_out_mask(config->inputCfg.channels));
 
     // Reload the QEM parity state on every configure.
-    DiracA2dpConfig::Load(context->gainsHalfDb, &context->diracEnabled);
+    DiracA2dpConfig::Load(context->gainsHalfDb, &context->diracEnabled, &context->fallback);
 
     context->voicingReady =
             (format == AUDIO_FORMAT_PCM_FLOAT || format == AUDIO_FORMAT_PCM_16_BIT) &&
