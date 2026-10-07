@@ -20,6 +20,7 @@ import android.content.Context
 import android.util.AttributeSet
 import androidx.preference.Preference
 import androidx.preference.PreferenceViewHolder
+import com.android.settingslib.widget.NormalPaddingMixin
 
 /**
  * The preview card at the top of the Dirac page. The curve pulls the stored
@@ -28,7 +29,7 @@ import androidx.preference.PreferenceViewHolder
 class EqPreviewPreference @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
-) : Preference(context, attrs) {
+) : Preference(context, attrs), NormalPaddingMixin {
 
     private var curve: EqCurveView? = null
 

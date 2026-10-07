@@ -25,6 +25,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.preference.Preference
 import androidx.preference.PreferenceViewHolder
+import com.android.settingslib.widget.NormalPaddingMixin
 
 /**
  * The inline equalizer board: one [VerticalSlider] per Dirac band with the
@@ -34,7 +35,7 @@ import androidx.preference.PreferenceViewHolder
 class EqBoardPreference @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
-) : Preference(context, attrs) {
+) : Preference(context, attrs), NormalPaddingMixin {
 
     var onBandChanged: ((Int, Float) -> Unit)? = null
 
