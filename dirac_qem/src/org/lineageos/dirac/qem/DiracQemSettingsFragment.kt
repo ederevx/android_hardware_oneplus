@@ -59,7 +59,7 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
         findPreference<EqBoardPreference>(KEY_EQ_BOARD)?.let { board ->
             board.onBandChanged = { band, value ->
                 DiracQemEffect.setBand(context, band, value)
-                findPreference<EqPreviewPreference>(KEY_EQ_PREVIEW)?.setBand(band, value)
+                findPreference<EqPreviewPreference>(KEY_EQ_PREVIEW)?.refresh()
                 // A manual band edit is exactly what the custom preset means,
                 // so the preset row must follow it.
                 findPreference<ListPreference>(KEY_STYLE)?.value =
@@ -84,7 +84,7 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
     private fun refreshBands() {
         val bands = DiracQemEffect.currentBands(requireContext())
         findPreference<EqBoardPreference>(KEY_EQ_BOARD)?.setBands(bands)
-        findPreference<EqPreviewPreference>(KEY_EQ_PREVIEW)?.setBands(bands)
+        findPreference<EqPreviewPreference>(KEY_EQ_PREVIEW)?.refresh()
     }
 
     private companion object {

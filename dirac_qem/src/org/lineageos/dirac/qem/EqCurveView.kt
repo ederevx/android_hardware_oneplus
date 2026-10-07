@@ -27,12 +27,17 @@ import android.view.View
  * Draws the current equalizer curve as a filled area over the -6..+6 dB range
  * on a light grid, so the top of the Dirac page reads as a curve even when
  * every band sits at 0 dB.
+ *
+ * The bands are pulled from [bandProvider] on every redraw rather than pushed
+ * into the view, so a redraw can never show a stale copy of the curve.
  */
 class EqCurveView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0,
 ) : View(context, attrs, defStyleAttr) {
+
+    var bandProvider: (() -> FloatArray)? = null
 
     private var bands = FloatArray(DiracPresets.EQ_BANDS)
     private val density = resources.displayMetrics.density
@@ -60,18 +65,6 @@ class EqCurveView @JvmOverloads constructor(
         color = 0x59FFFFFF
     }
 
-    fun setBands(newBands: FloatArray) {
-        bands = newBands.copyOf(DiracPresets.EQ_BANDS)
-        invalidate()
-    }
-
-    fun setBand(index: Int, value: Float) {
-        if (index in bands.indices) {
-            bands[index] = value
-            invalidate()
-        }
-    }
-
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val height = resolveSize((120f * density).toInt(), heightMeasureSpec)
         setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), height)
@@ -79,6 +72,7 @@ class EqCurveView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        bandProvider?.let { bands = it().copyOf(DiracPresets.EQ_BANDS) }
         val n = bands.size
         if (n < 2) {
             return
