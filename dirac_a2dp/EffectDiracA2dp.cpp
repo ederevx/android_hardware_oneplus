@@ -37,6 +37,7 @@
 #define LOG_TAG "dirac_a2dp"
 
 #include <errno.h>
+#include <sys/stat.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -74,6 +75,13 @@ typedef struct dirac_a2dp_object_s {
     // user extends Dirac to them. Data source: DiracA2dpConfig, written only
     // by the HAL; the effect never writes ACDB/cal or any DSP state.
     bool fallback;
+    // Live conf reload: the state file is stat()ed at most every
+    // kReloadCheckFrames frames, and re-parsed only when its mtime changes, so
+    // a UI toggle applies without restarting the audio stack. No extra thread.
+    time_t configMtimeSec;
+    long configMtimeNsec;
+    bool configMtimeValid;
+    unsigned framesSinceReload;
 
     // Built from the stream configuration; ready only for the sample formats
     // the voicing curve implements.
@@ -194,6 +202,28 @@ static void DiracA2dp_PassThrough(const dirac_a2dp_object_t *context,
     }
 }
 
+// Cheap throttle for the live conf check: about every 85 ms at 48 kHz.
+static const unsigned kReloadCheckFrames = 4096;
+
+// Re-parses the QEM state file when its mtime has moved. Called from the
+// process path so a switch toggle takes effect on the next buffer without a
+// device change or an audioserver restart.
+static void DiracA2dp_ReloadIfChanged(dirac_a2dp_object_t *context) {
+    struct stat st;
+
+    if (stat(DiracA2dpConfig::ConfigPath(), &st) != 0) {
+        return;
+    }
+    if (context->configMtimeValid && st.st_mtim.tv_sec == context->configMtimeSec &&
+        st.st_mtim.tv_nsec == context->configMtimeNsec) {
+        return;
+    }
+    context->configMtimeSec = st.st_mtim.tv_sec;
+    context->configMtimeNsec = st.st_mtim.tv_nsec;
+    context->configMtimeValid = true;
+    DiracA2dp_ReloadConfig(context);
+}
+
 static int32_t DiracA2dp_Process(effect_handle_t self,
                                  audio_buffer_t *inBuffer,
                                  audio_buffer_t *outBuffer) {
@@ -208,6 +238,14 @@ static int32_t DiracA2dp_Process(effect_handle_t self,
     }
 
     dirac_a2dp_object_t *context = &module->context;
+
+    // Re-read the QEM state file, throttled, before the gate: a switch toggle
+    // mid-stream must flip the fallback without a restart.
+    context->framesSinceReload += inBuffer->frameCount;
+    if (context->framesSinceReload >= kReloadCheckFrames) {
+        context->framesSinceReload = 0;
+        DiracA2dp_ReloadIfChanged(context);
+    }
 
     // The device is read on every call rather than only when the command
     // arrives, so a device switch mid-stream takes effect on the next buffer.
@@ -278,6 +316,8 @@ static int32_t DiracA2dp_Command(effect_handle_t self,
             }
             context->enabled = cmdCode == EFFECT_CMD_ENABLE;
             context->state = DIRAC_A2DP_STATE_ACTIVE;
+            // Pick up a toggle made while the effect was disabled.
+            DiracA2dp_ReloadConfig(context);
             *reinterpret_cast<int *>(pReplyData) = 0;
             break;
 
