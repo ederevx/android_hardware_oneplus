@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="dirac_model_entries">
+        <item>General Enhancement</item>
+        <item>OnePlus Type-C Bullets Earphones</item>
+        <item>OnePlus Bullets</item>
+        <item>OnePlus Bullets (V2)</item>
+        <item>OnePlus Icons</item>
+        <item>Feat. JBL E1+</item>
+    </string-array>
+    <string-array name="dirac_model_values">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+        <item>3</item>
+        <item>4</item>
+        <item>5</item>
+    </string-array>
+
+    <string-array name="dirac_style_entries">
+        <item>None</item>
+        <item>Custom</item>
+        <item>Pop</item>
+        <item>Rock &amp; Roll</item>
+        <item>Country</item>
+        <item>Jazz</item>
+        <item>Classic</item>
+        <item>Metal</item>
+        <item>Blues</item>
+        <item>Hip Hop</item>
+        <item>Dance</item>
+        <item>Electronic</item>
+    </string-array>
+    <string-array name="dirac_style_values">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+        <item>3</item>
+        <item>4</item>
+        <item>5</item>
+        <item>6</item>
+        <item>7</item>
+        <item>8</item>
+        <item>9</item>
+        <item>10</item>
+        <item>11</item>
+    </string-array>
+</resources>
