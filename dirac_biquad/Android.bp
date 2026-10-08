@@ -21,7 +21,6 @@ cc_library_shared {
         "DiracBiquadFilter.cpp",
         "EffectDiracBiquad.cpp",
         "LoudnessTilt.cpp",
-        "LowBandMono.cpp",
     ],
 
     header_libs: [

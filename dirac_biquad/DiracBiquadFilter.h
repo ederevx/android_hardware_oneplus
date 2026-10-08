@@ -23,7 +23,6 @@
 #include "Biquad.h"
 #include "DiracBiquadTable.h"
 #include "LoudnessTilt.h"
-#include "LowBandMono.h"
 
 // Host-side biquad curve with Dirac-QEM parity.
 //
@@ -49,27 +48,20 @@
 // pslimiter/safelimiter/timedomainlimiter chain. The preamp below is a static
 // headroom stand-in for those limiters, not a limiter.
 //
-// Before the user EQ the chain applies a fixed approximation of one Dirac
-// signature: the FIR response of the hdsound slot 8 filter
-// usecase/eheadset/hdsound-filters/09-Oneplus-Earphone_General_Bluetooth_
-// 170928v02 in dirac_resource.dar, the OEM "Earphone General Bluetooth"
-// earphone voicing. The design parameters live in DiracBiquadTable, one set
+// Before the user EQ the chain applies a fixed approximation of the module's
+// own flat-EQ signature: the FIR response of usecase/eheadset/defaults/941 in
+// dirac_resource.dar (the Dirac defaults the module loads even when the ACDB
+// user EQ is zeroed). The design parameters live in DiracBiquadTable, one set
 // per covered rate; that unit owns rate selection and its comment records the
-// target, the objective and the measured per-rate accuracy. Only the filter's
-// FIR magnitude is modelled; its IIR sections and the module's dynamics are
-// not, exactly as for the earlier defaults/941 target.
+// target, the objective and the measured per-rate accuracy. It is a neutral
+// approximation of the eheadset default, not the per-model hdsound filter and
+// not the speaker ispeaker/921 voice.
 //
 // After the signature and the user EQ, a volume-linked loudness tilt contours
 // the output by the stream attenuation the app publishes. It is applied before
 // the preamp and is deliberately excluded from the preamp probe, so the static
 // headroom stays a property of the signature and EQ alone. The tilt belongs to
 // LoudnessTilt, which owns its law, shelves and caps.
-//
-// The module's cross-channel `noise` Sum/Diff behaviour is not expressible by
-// the per-channel cascade; LowBandMono restores its low-frequency half by
-// high-passing the side signal, folding the low band to mono. The mid path is
-// untouched, so the signature, EQ and tilt keep their exact per-channel
-// response.
 class DiracBiquadFilter {
   public:
     static constexpr size_t kBandCount = 7;
@@ -79,7 +71,7 @@ class DiracBiquadFilter {
 
     static constexpr unsigned kMaxChannels = 8;
 
-    // Fixed Dirac signature sections. The parameters come from
+    // Fixed Dirac flat-EQ signature sections. The parameters come from
     // DiracBiquadTable, which selects them for the stream rate; the
     // coefficients are rebuilt for that rate in Configure.
     static constexpr size_t kSignatureCount = DiracBiquadTable::kSectionCount;
@@ -115,7 +107,6 @@ class DiracBiquadFilter {
     Biquad stages_[kMaxChannels][kBandCount];
     Biquad signature_[kMaxChannels][kSignatureCount];
     LoudnessTilt tilt_;
-    LowBandMono mono_;
     float preampGain_ = 1.0f;
     unsigned channelCount_ = 0;
     bool configured_ = false;
