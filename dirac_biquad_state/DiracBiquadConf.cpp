@@ -23,7 +23,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -33,6 +35,10 @@ namespace {
 
 constexpr const char *kDirectory = "/data/vendor/audio";
 constexpr mode_t kFileMode = 0644;
+
+// The law flattens past this, so the clamp only keeps a mute's infinity from
+// ever reaching the file.
+constexpr double kMaxVolumeDb = 120.0;
 
 int ClampHalfDb(int value) {
     if (value < DiracBiquadConf::kMinHalfDb) {
@@ -44,8 +50,20 @@ int ClampHalfDb(int value) {
     return value;
 }
 
-std::string Format(bool enabled, bool fallback, const std::vector<int32_t> &bandsHalfDb) {
-    std::string body = "# dirac a2dp state: enabled/fallback plus seven half-dB band gains\n";
+double ClampVolumeDb(double volumeDb) {
+    if (!std::isfinite(volumeDb) || volumeDb <= 0.0) {
+        return DiracBiquadConf::kUnknownVolumeDb;
+    }
+    return std::min(volumeDb, kMaxVolumeDb);
+}
+
+std::string Format(bool enabled, bool fallback, const std::vector<int32_t> &bandsHalfDb,
+                   double volumeDb) {
+    char volume[32];
+    snprintf(volume, sizeof(volume), "%.1f", ClampVolumeDb(volumeDb));
+
+    std::string body = "# dirac a2dp state: enabled/fallback, seven half-dB band gains"
+                        ", stream attenuation\n";
     body += "enabled=" + std::string(enabled ? "1" : "0") + "\n";
     body += "fallback=" + std::string(fallback ? "1" : "0") + "\n";
     body += "bands=";
@@ -56,12 +74,14 @@ std::string Format(bool enabled, bool fallback, const std::vector<int32_t> &band
         body += std::to_string(ClampHalfDb(bandsHalfDb[i]));
     }
     body += "\n";
+    body += "volume_db=" + std::string(volume) + "\n";
     return body;
 }
 
 }  // namespace
 
-bool DiracBiquadConf::Write(bool enabled, bool fallback, const std::vector<int32_t> &bandsHalfDb) {
+bool DiracBiquadConf::Write(bool enabled, bool fallback, const std::vector<int32_t> &bandsHalfDb,
+                            double volumeDb) {
     if (bandsHalfDb.size() != kBandCount) {
         LOG(ERROR) << "expected " << kBandCount << " bands, got " << bandsHalfDb.size();
         return false;
@@ -71,7 +91,7 @@ bool DiracBiquadConf::Write(bool enabled, bool fallback, const std::vector<int32
 
     const std::string path = kPath;
     const std::string temp = path + ".tmp";
-    const std::string body = Format(enabled, fallback, bandsHalfDb);
+    const std::string body = Format(enabled, fallback, bandsHalfDb, volumeDb);
 
     int fd = open(temp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, kFileMode);
     if (fd < 0) {

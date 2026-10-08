@@ -33,6 +33,15 @@
 // user-EQ gains and the enable flag only: the DAR device correction, the
 // HDSOUND filter index and the limiter chain are not reproduced, so A2DP
 // cannot sound identical to the wired route.
+//
+// Effect order: AudioFlinger applies the stream volume per track in
+// prepareTracks_l (mMasterVolume * track port volume) and runs the output
+// effect chain's process_l() afterwards, so this effect's input is already
+// attenuated by the stream volume. A low-volume loudness boost therefore
+// cannot clip the output, and the static headroom preamp, which answers only
+// to the signature and the user EQ, stays valid. The framework never sends
+// EFFECT_CMD_SET_VOLUME for this descriptor, so the attenuation arrives
+// through the same state channel as the EQ, in `volume_db`.
 
 #define LOG_TAG "dirac_biquad"
 
@@ -75,6 +84,10 @@ typedef struct dirac_biquad_object_s {
     // user extends Dirac to them. Data source: DiracBiquadConfig, written only
     // by the HAL; the effect never writes ACDB/cal or any DSP state.
     bool fallback;
+    // Stream attenuation in dB below the reference, from `volume_db` in the QEM
+    // state file; DiracBiquadConfig::kUnknownVolumeDb means the tilt is
+    // identity. Reloaded with the rest of the state.
+    double volumeDb;
     // Live conf reload: the state file is stat()ed at most every
     // kReloadCheckFrames frames, and re-parsed only when its mtime changes, so
     // a UI toggle applies without restarting the audio stack. No extra thread.
@@ -343,9 +356,9 @@ static int32_t DiracBiquad_Command(effect_handle_t self,
             }
             const int fd = static_cast<int>(*reinterpret_cast<uint32_t *>(pCmdData));
             dprintf(fd, "Dirac Biquad Filter: state %u enabled %d dirac %d fallback %d device %#x a2dp %d"
-                    " gains=%d;%d;%d;%d;%d;%d;%d\n",
+                    " volume_db=%.1f gains=%d;%d;%d;%d;%d;%d;%d\n",
                     context->state, context->enabled, context->diracEnabled, context->fallback,
-                    context->device, audio_is_a2dp_out_device(context->device),
+                    context->device, audio_is_a2dp_out_device(context->device), context->volumeDb,
                     context->gainsHalfDb[0], context->gainsHalfDb[1], context->gainsHalfDb[2],
                     context->gainsHalfDb[3], context->gainsHalfDb[4], context->gainsHalfDb[5],
                     context->gainsHalfDb[6]);
@@ -452,7 +465,8 @@ static void DiracBiquad_ReloadConfig(dirac_biquad_object_t *context) {
     if (!context->configured) {
         return;
     }
-    DiracBiquadConfig::Load(context->gainsHalfDb, &context->diracEnabled, &context->fallback);
+    DiracBiquadConfig::Load(context->gainsHalfDb, &context->diracEnabled, &context->fallback,
+                            &context->volumeDb);
 
     const audio_format_t format =
             static_cast<audio_format_t>(context->config.inputCfg.format);
@@ -462,10 +476,13 @@ static void DiracBiquad_ReloadConfig(dirac_biquad_object_t *context) {
             (format == AUDIO_FORMAT_PCM_FLOAT || format == AUDIO_FORMAT_PCM_16_BIT) &&
             context->filter.Configure(context->config.inputCfg.samplingRate, channelCount,
                                        context->gainsHalfDb);
-    ALOGV("%s: dirac %d gains %d;%d;%d;%d;%d;%d;%d", __func__, context->diracEnabled,
-          context->gainsHalfDb[0], context->gainsHalfDb[1], context->gainsHalfDb[2],
-          context->gainsHalfDb[3], context->gainsHalfDb[4], context->gainsHalfDb[5],
-          context->gainsHalfDb[6]);
+    // Forward the parsed attenuation on every reload so a volume step applies
+    // without a configure or a device change.
+    context->filter.SetAttenuationDb(context->volumeDb);
+    ALOGV("%s: dirac %d volume_db %.1f gains %d;%d;%d;%d;%d;%d;%d", __func__, context->diracEnabled,
+          context->volumeDb, context->gainsHalfDb[0], context->gainsHalfDb[1],
+          context->gainsHalfDb[2], context->gainsHalfDb[3], context->gainsHalfDb[4],
+          context->gainsHalfDb[5], context->gainsHalfDb[6]);
 }
 
 static int DiracBiquad_Init(dirac_biquad_module_t *module) {
@@ -475,7 +492,7 @@ static int DiracBiquad_Init(dirac_biquad_module_t *module) {
     module->context.fallback = false;
     module->context.device = AUDIO_DEVICE_NONE;
     DiracBiquadConfig::Fallback(module->context.gainsHalfDb, &module->context.diracEnabled,
-                              &module->context.fallback);
+                              &module->context.fallback, &module->context.volumeDb);
 
     DiracBiquad_Reset(&module->context);
     return 0;
@@ -502,12 +519,14 @@ static int DiracBiquad_Configure(dirac_biquad_module_t *module, const effect_con
             static_cast<unsigned>(audio_channel_count_from_out_mask(config->inputCfg.channels));
 
     // Reload the QEM parity state on every configure.
-    DiracBiquadConfig::Load(context->gainsHalfDb, &context->diracEnabled, &context->fallback);
+    DiracBiquadConfig::Load(context->gainsHalfDb, &context->diracEnabled, &context->fallback,
+                            &context->volumeDb);
 
     context->filterReady =
             (format == AUDIO_FORMAT_PCM_FLOAT || format == AUDIO_FORMAT_PCM_16_BIT) &&
             context->filter.Configure(config->inputCfg.samplingRate, channelCount,
                                        context->gainsHalfDb);
+    context->filter.SetAttenuationDb(context->volumeDb);
 
     return 0;
 }

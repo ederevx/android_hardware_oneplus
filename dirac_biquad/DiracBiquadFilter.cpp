@@ -16,9 +16,13 @@
 
 #include "DiracBiquadFilter.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include "Biquad.h"
+#include "DiracBiquadTable.h"
+#include "LoudnessTilt.h"
+#include "LowBandMono.h"
 
 namespace {
 
@@ -27,26 +31,6 @@ namespace {
 // Matching that Q, not just the centre, is what makes this the same band shape
 // the module's 0x12d36 curve asks for.
 constexpr double kBandQ = 1.0;
-
-struct SignatureSection {
-    BiquadType type;
-    double frequencyHz;
-    double q;
-    double gainDb;
-};
-
-// Approximation of the Dirac neutral signature: the FIR magnitude response of
-// usecase/eheadset/defaults/941 in dirac_resource.dar, the defaults the module
-// loads even with the user EQ zeroed, fitted as five RBJ sections (0.57 dB RMS
-// over 20 Hz-19 kHz). The design parameters are rate independent, so each
-// section is rebuilt for the stream rate.
-constexpr SignatureSection kSignature[DiracBiquadFilter::kSignatureCount] = {
-        {BiquadType::kLowShelf, 243.1, 0.522, -19.45},
-        {BiquadType::kPeaking, 1397.9, 3.968, -4.18},
-        {BiquadType::kPeaking, 4052.6, 2.330, -3.42},
-        {BiquadType::kHighShelf, 5680.6, 4.889, 8.25},
-        {BiquadType::kPeaking, 18897.9, 0.300, -38.00},
-};
 
 double HalfDbToDb(int halfDb) {
     return static_cast<double>(halfDb) * 0.5;
@@ -62,12 +46,13 @@ bool DiracBiquadFilter::Configure(unsigned sampleRateHz, unsigned channelCount,
         return false;
     }
 
+    const DiracBiquadSection *signature = DiracBiquadTable::Sections(sampleRateHz);
     for (size_t section = 0; section < kSignatureCount; ++section) {
         for (unsigned ch = 0; ch < channelCount; ++ch) {
-            signature_[ch][section].SetFilter(kSignature[section].type, sampleRateHz,
-                                              kSignature[section].frequencyHz,
-                                              kSignature[section].q,
-                                              kSignature[section].gainDb);
+            signature_[ch][section].SetPrototype(signature[section].type, sampleRateHz,
+                                                 signature[section].cornerHz,
+                                                 signature[section].q,
+                                                 signature[section].gainDb);
         }
     }
     for (size_t band = 0; band < kBandCount; ++band) {
@@ -79,6 +64,13 @@ bool DiracBiquadFilter::Configure(unsigned sampleRateHz, unsigned channelCount,
     }
 
     preampGain_ = ComputePreampGain(sampleRateHz);
+
+    // The tilt is rebuilt for the new rate; it is not part of the preamp probe.
+    tilt_.Configure(sampleRateHz, channelCount);
+
+    // The fold is a topology step: it adds no filter to the main magnitude
+    // response and cannot raise the per-channel peak.
+    mono_.Configure(sampleRateHz, channelCount);
 
     channelCount_ = channelCount;
     configured_ = true;
@@ -94,33 +86,80 @@ void DiracBiquadFilter::Reset() {
             stages_[ch][band].Reset();
         }
     }
+    tilt_.Reset();
+    mono_.Reset();
 }
 
-// The signature contributes gain too, so the preamp must answer to the real
-// peak of the whole cascade, not the largest single EQ band. The signature and
-// the EQ share one coefficient set across channels, so channel 0 is enough.
+void DiracBiquadFilter::SetAttenuationDb(double attenuationDb) {
+    tilt_.SetAttenuationDb(attenuationDb);
+}
+
+// Static headroom policy: the signature contributes gain too, so the preamp
+// answers to the real peak of the whole cascade rather than to the largest
+// single EQ band, and attenuates the chain only when that peak exceeds unity.
+// A coarse probe can step over a narrow resonance, so its maximum is refined
+// on a log-frequency axis before the gain is set. The signature and the EQ
+// share one coefficient set across channels, so channel 0 is enough.
 float DiracBiquadFilter::ComputePreampGain(unsigned sampleRateHz) const {
-    constexpr size_t kProbeCount = 64;
+    constexpr size_t kCoarsePoints = 961;  // ~1/96 octave over 20 Hz-20 kHz
     constexpr double kMinHz = 20.0;
     constexpr double kMaxHz = 20000.0;
+    constexpr double kInvPhi = 0.6180339887498949;
+    constexpr double kProbeMargin = 1.0012;  // 0.01 dB of conservative headroom
 
-    double peak = 0.0;
-    for (size_t probe = 0; probe < kProbeCount; ++probe) {
-        const double t = static_cast<double>(probe) / static_cast<double>(kProbeCount - 1);
-        const double frequencyHz = kMinHz * std::pow(kMaxHz / kMinHz, t);
-        double magnitude = 1.0;
-        for (size_t section = 0; section < kSignatureCount; ++section) {
-            magnitude *= signature_[0][section].MagnitudeAt(sampleRateHz, frequencyHz);
-        }
-        for (size_t band = 0; band < kBandCount; ++band) {
-            magnitude *= stages_[0][band].MagnitudeAt(sampleRateHz, frequencyHz);
-        }
+    const double logMin = std::log(kMinHz);
+    const double logMax = std::log(kMaxHz);
+    const double step = (logMax - logMin) / static_cast<double>(kCoarsePoints - 1);
+
+    double peak = CascadeMagnitudeAt(sampleRateHz, kMinHz);
+    double peakLogHz = logMin;
+    for (size_t point = 1; point < kCoarsePoints; ++point) {
+        const double logHz = logMin + step * static_cast<double>(point);
+        const double magnitude = CascadeMagnitudeAt(sampleRateHz, std::exp(logHz));
         if (magnitude > peak) {
             peak = magnitude;
+            peakLogHz = logHz;
         }
     }
 
-    return peak > 1.0 ? static_cast<float>(1.0 / peak) : 1.0f;
+    // Golden-section refinement of the coarse maximum, bracketed by its
+    // neighbouring probe frequencies.
+    double low = std::max(logMin, peakLogHz - step);
+    double high = std::min(logMax, peakLogHz + step);
+    double x1 = high - kInvPhi * (high - low);
+    double x2 = low + kInvPhi * (high - low);
+    double m1 = CascadeMagnitudeAt(sampleRateHz, std::exp(x1));
+    double m2 = CascadeMagnitudeAt(sampleRateHz, std::exp(x2));
+    for (int iteration = 0; iteration < 40; ++iteration) {
+        if (m1 < m2) {
+            low = x1;
+            x1 = x2;
+            m1 = m2;
+            x2 = low + kInvPhi * (high - low);
+            m2 = CascadeMagnitudeAt(sampleRateHz, std::exp(x2));
+        } else {
+            high = x2;
+            x2 = x1;
+            m2 = m1;
+            x1 = high - kInvPhi * (high - low);
+            m1 = CascadeMagnitudeAt(sampleRateHz, std::exp(x1));
+        }
+    }
+    peak = std::max(peak, std::max(m1, m2));
+
+    const double guardedPeak = peak * kProbeMargin;
+    return guardedPeak > 1.0 ? static_cast<float>(1.0 / guardedPeak) : 1.0f;
+}
+
+double DiracBiquadFilter::CascadeMagnitudeAt(double sampleRateHz, double frequencyHz) const {
+    double magnitude = 1.0;
+    for (size_t section = 0; section < kSignatureCount; ++section) {
+        magnitude *= signature_[0][section].MagnitudeAt(sampleRateHz, frequencyHz);
+    }
+    for (size_t band = 0; band < kBandCount; ++band) {
+        magnitude *= stages_[0][band].MagnitudeAt(sampleRateHz, frequencyHz);
+    }
+    return magnitude;
 }
 
 float DiracBiquadFilter::ProcessSample(float x, unsigned channel) {
@@ -130,6 +169,7 @@ float DiracBiquadFilter::ProcessSample(float x, unsigned channel) {
     for (size_t band = 0; band < kBandCount; ++band) {
         x = stages_[channel][band].ProcessSample(x);
     }
+    x = tilt_.ProcessSample(x, channel);
     return x * preampGain_;
 }
 
@@ -140,18 +180,27 @@ void DiracBiquadFilter::Process(const void *input, void *output, size_t frameCou
         return;
     }
 
+    // One frame is staged so the cross-channel fold sees both channels of the
+    // pair before either is written; input and output may still alias because
+    // each staged value is read before its output slot is written.
+    float staged[kMaxChannels];
+
     switch (format) {
         case AUDIO_FORMAT_PCM_FLOAT: {
             const float *in = static_cast<const float *>(input);
             float *out = static_cast<float *>(output);
             for (size_t frame = 0; frame < frameCount; ++frame) {
+                const size_t base = frame * channelCount;
                 for (unsigned ch = 0; ch < channelCount; ++ch) {
-                    const size_t index = frame * channelCount + ch;
-                    float y = ProcessSample(in[index], ch);
+                    staged[ch] = ProcessSample(in[base + ch], ch);
+                }
+                mono_.ProcessFrame(staged, channelCount);
+                for (unsigned ch = 0; ch < channelCount; ++ch) {
+                    float y = staged[ch];
                     if (accumulate) {
-                        y += out[index];
+                        y += out[base + ch];
                     }
-                    out[index] = std::fmin(1.0f, std::fmax(-1.0f, y));
+                    out[base + ch] = std::fmin(1.0f, std::fmax(-1.0f, y));
                 }
             }
             break;
@@ -160,14 +209,18 @@ void DiracBiquadFilter::Process(const void *input, void *output, size_t frameCou
             const int16_t *in = static_cast<const int16_t *>(input);
             int16_t *out = static_cast<int16_t *>(output);
             for (size_t frame = 0; frame < frameCount; ++frame) {
+                const size_t base = frame * channelCount;
                 for (unsigned ch = 0; ch < channelCount; ++ch) {
-                    const size_t index = frame * channelCount + ch;
-                    float y = ProcessSample(static_cast<float>(in[index]) / 32768.0f, ch);
+                    staged[ch] = ProcessSample(static_cast<float>(in[base + ch]) / 32768.0f, ch);
+                }
+                mono_.ProcessFrame(staged, channelCount);
+                for (unsigned ch = 0; ch < channelCount; ++ch) {
+                    float y = staged[ch];
                     if (accumulate) {
-                        y += static_cast<float>(out[index]) / 32768.0f;
+                        y += static_cast<float>(out[base + ch]) / 32768.0f;
                     }
                     y = std::fmin(1.0f, std::fmax(-1.0f, y));
-                    out[index] = static_cast<int16_t>(std::lround(y * 32767.0f));
+                    out[base + ch] = static_cast<int16_t>(std::lround(y * 32767.0f));
                 }
             }
             break;

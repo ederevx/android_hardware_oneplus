@@ -17,8 +17,11 @@ cc_library_shared {
     srcs: [
         "Biquad.cpp",
         "DiracBiquadConfig.cpp",
+        "DiracBiquadTable.cpp",
         "DiracBiquadFilter.cpp",
         "EffectDiracBiquad.cpp",
+        "LoudnessTilt.cpp",
+        "LowBandMono.cpp",
     ],
 
     header_libs: [
