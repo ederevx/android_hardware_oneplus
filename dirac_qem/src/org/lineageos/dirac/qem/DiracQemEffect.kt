@@ -49,6 +49,7 @@ object DiracQemEffect {
     private const val KEY_CUSTOM = "custom"
     private const val KEY_MODEL = "model"
     private const val KEY_MOVIE = "movie"
+    private const val KEY_A2DP_FALLBACK = "a2dp_fallback"
 
     const val OUTPUT_INTERNAL = 0
     const val OUTPUT_EXTERNAL = 1
@@ -82,6 +83,23 @@ object DiracQemEffect {
     }
 
     fun isEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_ENABLED, false)
+
+    /**
+     * Whether this build ships the A2DP software-fallback switch. This is a
+     * build-time config resource, never a library probe: a product built
+     * without the dirac_biquad effect has no switch and no propagation at all,
+     * so this app has no dependency of any kind on the effect module.
+     */
+    fun isA2dpFallbackAvailable(context: Context): Boolean =
+        context.resources.getBoolean(R.bool.config_dirac_biquad_fallback_available)
+
+    fun isA2dpFallbackEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_A2DP_FALLBACK, false)
+
+    fun setA2dpFallback(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_A2DP_FALLBACK, enabled).apply()
+        apply(context)
+    }
 
     /**
      * The route this app last drove. A plug or unplug is announced by [apply],
@@ -260,6 +278,7 @@ object DiracQemEffect {
             .putString(KEY_CUSTOM, DiracPresets.encodeBands(currentBands(context)))
             .putInt(KEY_STYLE, DiracPresets.STYLE_CUSTOM)
             .apply()
+        DiracBiquadState.publish(context)
         DiracTrace.log(TAG_BANDS) { "persist ns=${System.nanoTime() - started}" }
     }
 
@@ -296,6 +315,9 @@ object DiracQemEffect {
     fun apply(context: Context) {
         // A pass is where the route is re-read; the band path then reuses it.
         val route = resolveRoute(context, true)
+        // Publish the state the host-side A2DP effect reads, on every pass, so
+        // an enable, a fallback toggle or a route change is never missed.
+        DiracBiquadState.publish(context)
         val applied = appliedRoutes(context)
         if (!isEnabled(context)) {
             // Clear every route the app enabled. An empty record means the app

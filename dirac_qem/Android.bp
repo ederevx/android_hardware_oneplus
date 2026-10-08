@@ -14,6 +14,7 @@ android_app {
 
     // Only the widgets and the theme the screen uses.
     static_libs: [
+        "org.lineageos.dirac.biquad-java",
         "SettingsLibCollapsingToolbarBaseActivity",
         "SettingsLibMainSwitchPreference",
         "SettingsLibSettingsTheme",

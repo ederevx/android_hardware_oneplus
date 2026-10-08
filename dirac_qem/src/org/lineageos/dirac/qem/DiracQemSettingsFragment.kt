@@ -21,6 +21,7 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Bundle
 import androidx.preference.ListPreference
+import androidx.preference.SwitchPreferenceCompat
 import com.android.settingslib.widget.MainSwitchPreference
 import com.android.settingslib.widget.SettingsBasePreferenceFragment
 
@@ -70,6 +71,22 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
             preference.setOnPreferenceChangeListener { _, value ->
                 DiracQemEffect.setEnabled(context, value as Boolean)
                 true
+            }
+        }
+
+        // The A2DP fallback row exists only when the build ships the
+        // dirac_biquad effect. Absent that, the row is removed: no dead
+        // preference, no listener, and nothing that would ever be pushed.
+        val fallback = findPreference<SwitchPreferenceCompat>(KEY_A2DP_FALLBACK)
+        if (fallback != null) {
+            if (!DiracQemEffect.isA2dpFallbackAvailable(context)) {
+                preferenceScreen.removePreference(fallback)
+            } else {
+                fallback.isChecked = DiracQemEffect.isA2dpFallbackEnabled(context)
+                fallback.setOnPreferenceChangeListener { _, value ->
+                    DiracQemEffect.setA2dpFallback(context, value as Boolean)
+                    true
+                }
             }
         }
 
@@ -129,6 +146,7 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
 
     private companion object {
         const val KEY_ENABLED = "dirac_enable"
+        const val KEY_A2DP_FALLBACK = "dirac_biquad_fallback"
         const val KEY_MODEL = "dirac_model"
         const val KEY_STYLE = "dirac_style"
         const val KEY_EQ_PREVIEW = "dirac_eq_preview"

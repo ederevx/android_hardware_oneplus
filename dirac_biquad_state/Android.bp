@@ -1,0 +1,29 @@
+//
+// SPDX-FileCopyrightText: 2026 The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+//
+
+// The one writer of the A2DP fallback config file. A system-side daemon, so it
+// registers with the system servicemanager and stays alive for binder calls.
+cc_binary {
+    name: "dirac_biquad_state",
+    owner: "oneplus",
+    init_rc: ["dirac_biquad_state.rc"],
+
+    srcs: [
+        "DiracBiquadConf.cpp",
+        "service.cpp",
+    ],
+
+    shared_libs: [
+        "libbase",
+        "libbinder_ndk",
+        "liblog",
+        "org.lineageos.dirac.biquad-ndk",
+    ],
+
+    cflags: [
+        "-Wall",
+        "-Werror",
+    ],
+}

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Whether the settings page offers the A2DP software-fallback switch.
+
+      This is a build-time flag, not a runtime library probe: the device build
+      overlays it to true only when the dirac_biquad effect is part of the
+      product. A build without the effect leaves it false, so the page has no
+      switch, the app sends no state for it, and org.lineageos.dirac.qem keeps
+      no dependency of any kind on the effect module.
+    -->
+    <bool name="config_dirac_biquad_fallback_available">false</bool>
+</resources>

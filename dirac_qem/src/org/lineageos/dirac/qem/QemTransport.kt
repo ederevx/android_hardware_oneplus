@@ -44,7 +44,9 @@ class QemTransport(context: Context) {
                 persistValues.forEach { persist ->
                     rates.forEach { rate ->
                         audioManager.setParameters(
-                            QemProtocol.setString(topo, appType, persist, device, sndDevId, rate, data)
+                            QemProtocol.setString(
+                                topo, appType, persist, device, sndDevId, rate, data
+                            )
                         )
                         frames++
                     }

@@ -1,0 +1,93 @@
+/*
+ * Copyright (C) 2026 The LineageOS Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#pragma once
+
+#include <stddef.h>
+
+#include <hardware/audio.h>
+
+#include "Biquad.h"
+
+// Host-side biquad curve with Dirac-QEM parity.
+//
+// The Dirac CAPIv2 module (0x12d00 ipowersound / 0x12d01 eheadset) exposes two
+// independent EQ surfaces: a low-level 80-byte bank (param 0x12d00, ten
+// filters of {enable, fchz, gaindb, q}) and a high-level seven-float band
+// curve (param 0x12d36). The QEM app drives only 0x12d36, and this ROM's ACDB
+// defaults the bank to all-zero, so the audible user EQ is the seven-band
+// curve: seven peaking bands at 68/165/400/972/2000/6000/14000 Hz.
+//
+// The band shape is the Dirac equalizer's own model: the app's EqCurveView
+// reduces each band to the small-signal limit of the RBJ peaking response, a
+// rational Lorentzian in (cos w - cos w0), and builds it with
+// alpha = sin(w0)/2. In RBJ terms alpha = sin(w0)/(2Q), so the Dirac bands are
+// Q = 1.0, which is exactly what the chain below uses. It is therefore the
+// same second-order peaking bank, at the same centres and the same Q, in the
+// same low-to-high order.
+//
+// Not reproduced, and not observable from the shipped blobs: the 10-filter
+// bank (the DAR device correction and the stock filter presets, zeroed in
+// this MTP cal set), the module's Input/Output HP fchz rumble filters (also
+// zeroed), the HDSOUND filter index (its data lives in diracvdd.bin), and the
+// pslimiter/safelimiter/timedomainlimiter chain. The preamp below is a static
+// headroom stand-in for those limiters, not a limiter.
+//
+// Before the user EQ the chain applies a fixed approximation of the module's
+// own flat-EQ signature: the FIR response of usecase/eheadset/defaults/941 in
+// dirac_resource.dar (the Dirac defaults the module loads even when the ACDB
+// user EQ is zeroed), fitted as five RBJ sections to ~0.6 dB RMS. It is a
+// neutral approximation of the eheadset default, not the per-model hdsound
+// filter and not the speaker ispeaker/921 voice.
+class DiracBiquadFilter {
+  public:
+    static constexpr size_t kBandCount = 7;
+
+    static constexpr double kBandCenterHz[kBandCount] = {
+            68.0, 165.0, 400.0, 972.0, 2000.0, 6000.0, 14000.0};
+
+    static constexpr unsigned kMaxChannels = 8;
+
+    // Fixed Dirac flat-EQ signature sections (RBJ design parameters; the
+    // coefficients are rebuilt for the stream rate in Configure).
+    static constexpr size_t kSignatureCount = 5;
+
+    // Builds the curve for the stream rate and channel count from the half-dB
+    // band gains. Returns false for an unsupported combination, in which case
+    // the caller must pass the stream through untouched.
+    bool Configure(unsigned sampleRateHz, unsigned channelCount,
+                   const int gainsHalfDb[kBandCount]);
+
+    void Reset();
+
+    // Applies the curve to an interleaved PCM buffer. `input` and `output` may
+    // alias; `accumulate` adds the result to the existing output content, as
+    // EFFECT_BUFFER_ACCESS_ACCUMULATE requires.
+    void Process(const void *input, void *output, size_t frameCount, unsigned channelCount,
+                 audio_format_t format, bool accumulate);
+
+  private:
+    float ProcessSample(float x, unsigned channel);
+
+    // Unity, or the attenuation that keeps the true cascade peak at 0 dBFS.
+    float ComputePreampGain(unsigned sampleRateHz) const;
+
+    Biquad stages_[kMaxChannels][kBandCount];
+    Biquad signature_[kMaxChannels][kSignatureCount];
+    float preampGain_ = 1.0f;
+    unsigned channelCount_ = 0;
+    bool configured_ = false;
+};
