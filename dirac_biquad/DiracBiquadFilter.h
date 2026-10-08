@@ -22,6 +22,7 @@
 
 #include "Biquad.h"
 #include "DiracBiquadTable.h"
+#include "LoudnessTilt.h"
 
 // Host-side biquad curve with Dirac-QEM parity.
 //
@@ -55,6 +56,12 @@
 // target, the objective and the measured per-rate accuracy. It is a neutral
 // approximation of the eheadset default, not the per-model hdsound filter and
 // not the speaker ispeaker/921 voice.
+//
+// After the signature and the user EQ, a volume-linked loudness tilt contours
+// the output by the stream attenuation the app publishes. It is applied before
+// the preamp and is deliberately excluded from the preamp probe, so the static
+// headroom stays a property of the signature and EQ alone. The tilt belongs to
+// LoudnessTilt, which owns its law, shelves and caps.
 class DiracBiquadFilter {
   public:
     static constexpr size_t kBandCount = 7;
@@ -74,6 +81,10 @@ class DiracBiquadFilter {
     // the caller must pass the stream through untouched.
     bool Configure(unsigned sampleRateHz, unsigned channelCount,
                    const int gainsHalfDb[kBandCount]);
+
+    // Drive for the volume-linked loudness tilt. Forwarded to LoudnessTilt;
+    // the preamp probe never sees it.
+    void SetAttenuationDb(double attenuationDb);
 
     void Reset();
 
@@ -95,6 +106,7 @@ class DiracBiquadFilter {
 
     Biquad stages_[kMaxChannels][kBandCount];
     Biquad signature_[kMaxChannels][kSignatureCount];
+    LoudnessTilt tilt_;
     float preampGain_ = 1.0f;
     unsigned channelCount_ = 0;
     bool configured_ = false;

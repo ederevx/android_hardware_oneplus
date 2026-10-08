@@ -16,6 +16,7 @@
 
 #include "DiracBiquadConfig.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -73,6 +74,17 @@ bool ParseBands(const char *value, int gains[DiracBiquadConfig::kBandCount]) {
     return index == DiracBiquadConfig::kBandCount;
 }
 
+// A usable value is a finite, strictly positive attenuation. Everything else,
+// including a mute's -infinity and the writer's -1 sentinel, is unknown.
+double ParseVolumeDb(const char *value) {
+    char *end = nullptr;
+    const double parsed = strtod(value, &end);
+    if (end == value || *end != '\0' || !isfinite(parsed) || parsed <= 0.0) {
+        return DiracBiquadConfig::kUnknownVolumeDb;
+    }
+    return parsed;
+}
+
 }  // namespace
 
 const char *DiracBiquadConfig::ConfigPath() {
@@ -80,7 +92,7 @@ const char *DiracBiquadConfig::ConfigPath() {
 }
 
 void DiracBiquadConfig::Fallback(int gainsHalfDb[kBandCount], bool *enabled,
-                               bool *fallback) {
+                               bool *fallback, double *volumeDb) {
     for (size_t i = 0; i < kBandCount; ++i) {
         gainsHalfDb[i] = kFallbackGains[i];
     }
@@ -90,9 +102,13 @@ void DiracBiquadConfig::Fallback(int gainsHalfDb[kBandCount], bool *enabled,
     if (fallback != nullptr) {
         *fallback = false;
     }
+    if (volumeDb != nullptr) {
+        *volumeDb = kUnknownVolumeDb;
+    }
 }
 
-bool DiracBiquadConfig::Load(int gainsHalfDb[kBandCount], bool *enabled, bool *fallback) {
+bool DiracBiquadConfig::Load(int gainsHalfDb[kBandCount], bool *enabled, bool *fallback,
+                             double *volumeDb) {
     int gains[kBandCount];
     for (size_t i = 0; i < kBandCount; ++i) {
         gains[i] = kFallbackGains[i];
@@ -101,10 +117,11 @@ bool DiracBiquadConfig::Load(int gainsHalfDb[kBandCount], bool *enabled, bool *f
     bool parsedFallback = false;
     bool haveEnabled = false;
     bool haveBands = false;
+    double parsedVolumeDb = kUnknownVolumeDb;
 
     FILE *file = fopen(kConfigPath, "re");
     if (file == nullptr) {
-        Fallback(gainsHalfDb, enabled, fallback);
+        Fallback(gainsHalfDb, enabled, fallback, volumeDb);
         return false;
     }
 
@@ -129,6 +146,8 @@ bool DiracBiquadConfig::Load(int gainsHalfDb[kBandCount], bool *enabled, bool *f
             parsedFallback = strtol(value, nullptr, 10) != 0;
         } else if (strcmp(key, "bands") == 0) {
             haveBands = ParseBands(value, gains);
+        } else if (strcmp(key, "volume_db") == 0) {
+            parsedVolumeDb = ParseVolumeDb(value);
         }
     }
     fclose(file);
@@ -141,6 +160,9 @@ bool DiracBiquadConfig::Load(int gainsHalfDb[kBandCount], bool *enabled, bool *f
     }
     if (fallback != nullptr) {
         *fallback = parsedFallback;
+    }
+    if (volumeDb != nullptr) {
+        *volumeDb = parsedVolumeDb;
     }
     return haveEnabled && haveBands;
 }

@@ -21,6 +21,7 @@
 
 #include "Biquad.h"
 #include "DiracBiquadTable.h"
+#include "LoudnessTilt.h"
 
 namespace {
 
@@ -63,6 +64,9 @@ bool DiracBiquadFilter::Configure(unsigned sampleRateHz, unsigned channelCount,
 
     preampGain_ = ComputePreampGain(sampleRateHz);
 
+    // The tilt is rebuilt for the new rate; it is not part of the preamp probe.
+    tilt_.Configure(sampleRateHz, channelCount);
+
     channelCount_ = channelCount;
     configured_ = true;
     return true;
@@ -77,6 +81,11 @@ void DiracBiquadFilter::Reset() {
             stages_[ch][band].Reset();
         }
     }
+    tilt_.Reset();
+}
+
+void DiracBiquadFilter::SetAttenuationDb(double attenuationDb) {
+    tilt_.SetAttenuationDb(attenuationDb);
 }
 
 // Static headroom policy: the signature contributes gain too, so the preamp
@@ -154,6 +163,7 @@ float DiracBiquadFilter::ProcessSample(float x, unsigned channel) {
     for (size_t band = 0; band < kBandCount; ++band) {
         x = stages_[channel][band].ProcessSample(x);
     }
+    x = tilt_.ProcessSample(x, channel);
     return x * preampGain_;
 }
 
