@@ -23,6 +23,7 @@
 #include "Biquad.h"
 #include "DiracBiquadTable.h"
 #include "LoudnessTilt.h"
+#include "LowBandMono.h"
 
 // Host-side biquad curve with Dirac-QEM parity.
 //
@@ -62,6 +63,12 @@
 // the preamp and is deliberately excluded from the preamp probe, so the static
 // headroom stays a property of the signature and EQ alone. The tilt belongs to
 // LoudnessTilt, which owns its law, shelves and caps.
+//
+// The module's cross-channel `noise` Sum/Diff behaviour is not expressible by
+// the per-channel cascade; LowBandMono restores its low-frequency half by
+// high-passing the side signal, folding the low band to mono. The mid path is
+// untouched, so the signature, EQ and tilt keep their exact per-channel
+// response.
 class DiracBiquadFilter {
   public:
     static constexpr size_t kBandCount = 7;
@@ -107,6 +114,7 @@ class DiracBiquadFilter {
     Biquad stages_[kMaxChannels][kBandCount];
     Biquad signature_[kMaxChannels][kSignatureCount];
     LoudnessTilt tilt_;
+    LowBandMono mono_;
     float preampGain_ = 1.0f;
     unsigned channelCount_ = 0;
     bool configured_ = false;
