@@ -30,10 +30,17 @@ import android.os.IBinder
  */
 class DiracRouteService : Service() {
     private val receiver = DiracStateReceiver()
+    private lateinit var volumeObserver: DiracVolumeObserver
 
     override fun onCreate() {
         super.onCreate()
+        // The observer needs an attached context, so it is built here and not
+        // in the constructor, where this would still be unattached.
+        volumeObserver = DiracVolumeObserver(this)
         registerReceiver(receiver, DiracStateReceiver.intentFilter(), Context.RECEIVER_NOT_EXPORTED)
+        // The effect is off unless the fallback ships, so the volume observer
+        // rides this long-lived process only when there is a consumer for it.
+        volumeObserver.start()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -42,6 +49,7 @@ class DiracRouteService : Service() {
     }
 
     override fun onDestroy() {
+        volumeObserver.stop()
         unregisterReceiver(receiver)
         super.onDestroy()
     }
