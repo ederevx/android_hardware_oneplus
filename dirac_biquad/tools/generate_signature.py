@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the per-rate Dirac flat-EQ signature table.
+"""Generate the per-rate Dirac slot-8 signature table.
 
 Usage:  python3 tools/generate_signature.py                 # print the C++ table
         python3 tools/generate_signature.py --report        # fit report only
@@ -15,12 +15,20 @@ from the tree that ships it.  No vendor data is copied into this repository -
 only the script that reads the blob and the fitted prototype table that comes
 out of it, which is our own approximation, not a transcription.
 
-Provenance: the target is the flat-EQ ("defaults/941") FIR magnitude response
-of usecase/eheadset/defaults/941 in that blob, referenced to 1 kHz.  The blob
-carries a real FIR for 44100 and 48000 Hz only, so those two rates are fitted
-to their own target; 88200 and 96000 have no FIR and reuse the 48000
+Provenance: the target is the FIR magnitude response of the hdsound slot 8
+filter, usecase/eheadset/hdsound-filters/09-Oneplus-Earphone_General_Bluetooth_
+170928v02 in that blob, referenced to 1 kHz.  This is the OEM earphone voicing
+that the wired model list selects for the "Earphone General Bluetooth" entry.
+The blob carries a real FIR for 44100 and 48000 Hz only, so those two rates are
+fitted to their own target; 88200 and 96000 have no FIR and reuse the 48000
 prototype, which is the same closed-form design - the DAR design is an analog
 prototype sampled per rate, so its 48 kHz prototype already describes them.
+
+The DAR directory's eheadset hdsound-filters name table runs one entry ahead of
+its payload table (the 01-speaker name shares the defaults/941 payload), so the
+entry such a key names holds the next filter's payload.  container_payload()
+resolves those keys by the ProtoFilter's own stored identity instead, so the
+named slot's coefficients are decoded rather than its neighbour's.
 
 Objective: sixteen RBJ sections evaluated on the digital axis of each rate,
 against that rate's own target over the full 20 Hz - 20 kHz band (no clamped
@@ -40,6 +48,7 @@ import argparse
 import json
 import math
 import os
+import re
 import struct
 import sys
 
@@ -68,7 +77,8 @@ COVERED_RATES = (44100, 48000, 88200, 96000)
 FITTED_RATES = (44100, 48000)
 DEFAULT_DAR = ("vendor/oneplus/msm8998-common/proprietary/vendor/lib/rfsa/adsp/"
                "dirac_resource.dar")
-ENTRY = "usecase/eheadset/defaults/941"
+ENTRY = ("usecase/eheadset/hdsound-filters/"
+         "09-Oneplus-Earphone_General_Bluetooth_170928v02")
 
 
 # --- DAR0 container + ProtoFilter decoding ---------------------------------
@@ -108,23 +118,70 @@ def fields(buf):
         yield field, wire, value
 
 
-def container_payload(path, name):
-    """Length-prefixed payload of a named resource in a DAR0 container."""
+def container_resources(path):
+    """(name, payload) of every resource in a DAR0 container, in file order."""
     data = open(path, "rb").read()
     if data[:4] != b"DAR0":
         raise SystemExit("%s is not a DAR0 container" % path)
-    count, names_size, data_size = struct.unpack_from("<III", data, 4)
+    count, names_size, _ = struct.unpack_from("<III", data, 4)
     name_base = 16 + count * 8
     data_base = name_base + names_size
     pairs = [struct.unpack_from("<II", data, 16 + 8 * i) for i in range(count)]
-    previous = 0
+    resources, previous = [], 0
     for cumulative, offset in pairs:
         resource = data[name_base + previous:name_base + cumulative - 1].decode("latin1")
         previous = cumulative
-        if resource == name:
-            length = struct.unpack_from("<I", data, data_base + offset)[0]
-            return data[data_base + offset + 4:data_base + offset + 4 + length]
-    raise SystemExit("resource %r not found in %s" % (name, path))
+        length = struct.unpack_from("<I", data, data_base + offset)[0]
+        resources.append(
+            (resource, data[data_base + offset + 4:data_base + offset + 4 + length]))
+    return resources
+
+
+def filter_identity(text):
+    """Filter identity: a leading NN- slot ordinal and every separator removed,
+    lowercased.  A DAR key and the ProtoFilter's own stored name then compare on
+    their common text, even though the stored name is truncated and the key
+    carries a date suffix."""
+    return re.sub(r"[^a-z0-9]", "", re.sub(r"^\d\d-", "", text).lower())
+
+
+def proto_name(payload):
+    """The ProtoFilter message's own name field, or "" when it has none.  A
+    scalar resource is not a ProtoFilter, so a short payload is simply unnamed."""
+    try:
+        for field, wire, value in fields(payload):
+            if field == 1 and wire == 2:
+                return value.decode("latin1")
+    except (struct.error, IndexError):
+        pass
+    return ""
+
+
+def identity_matches(wanted, identity):
+    return bool(identity) and (wanted.startswith(identity) or identity.startswith(wanted))
+
+
+def container_payload(path, name):
+    """Length-prefixed payload of a named resource in a DAR0 container.
+
+    The eheadset hdsound-filters name table runs one entry ahead of the payload
+    table, so the entry a hdsound-filters key names holds the *next* filter's
+    payload.  Resolve those keys by the ProtoFilter's own identity so the named
+    filter is decoded, not its neighbour; every other resource keeps its entry.
+    """
+    resources = container_resources(path)
+    own = next((payload for resource, payload in resources if resource == name), None)
+    if own is None:
+        raise SystemExit("resource %r not found in %s" % (name, path))
+    if "hdsound-filters/" not in name:
+        return own
+    wanted = filter_identity(name.rsplit("/", 1)[-1])
+    if identity_matches(wanted, filter_identity(proto_name(own))):
+        return own
+    for resource, payload in resources:
+        if identity_matches(wanted, filter_identity(proto_name(payload))):
+            return payload
+    return own
 
 
 def fir_taps(path, channel="Left"):
