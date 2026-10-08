@@ -37,8 +37,9 @@ constexpr const char *kServiceName = "dirac_biquad_state";
 class DiracBiquadStateService : public BnDiracBiquadState {
   public:
     ndk::ScopedAStatus setState(bool enabled, bool fallback,
-                                const std::vector<int32_t> &bandsHalfDb) override {
-        if (!dirac::DiracBiquadConf::Write(enabled, fallback, bandsHalfDb)) {
+                                const std::vector<int32_t> &bandsHalfDb,
+                                double volumeDb) override {
+        if (!dirac::DiracBiquadConf::Write(enabled, fallback, bandsHalfDb, volumeDb)) {
             return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
         }
         return ndk::ScopedAStatus::ok();

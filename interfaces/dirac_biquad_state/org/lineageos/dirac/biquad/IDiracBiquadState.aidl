@@ -25,7 +25,9 @@ package org.lineageos.dirac.biquad;
  */
 interface IDiracBiquadState {
     /**
-     * Persist the effect's state. Bands are seven half-dB gains.
+     * Persist the effect's state. Bands are seven half-dB gains. `volumeDb`
+     * is the stream attenuation in dB below the reference, or a value <= 0
+     * when the volume is unknown (the effect then leaves the tilt off).
      */
-    void setState(boolean enabled, boolean fallback, in int[] bandsHalfDb);
+    void setState(boolean enabled, boolean fallback, in int[] bandsHalfDb, double volumeDb);
 }

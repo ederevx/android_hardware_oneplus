@@ -30,8 +30,14 @@ class DiracBiquadConf {
     static constexpr int kMinHalfDb = -12;
     static constexpr int kMaxHalfDb = 12;
 
-    // Writes enabled, fallback and the clamped band gains atomically.
-    static bool Write(bool enabled, bool fallback, const std::vector<int32_t> &bandsHalfDb);
+    // Stream attenuation sentinel: no usable volume, written as -1 so the
+    // effect keeps the loudness tilt at identity.
+    static constexpr double kUnknownVolumeDb = -1.0;
+
+    // Writes enabled, fallback, the clamped band gains and the validated stream
+    // attenuation atomically.
+    static bool Write(bool enabled, bool fallback, const std::vector<int32_t> &bandsHalfDb,
+                      double volumeDb);
 };
 
 }  // namespace dirac
