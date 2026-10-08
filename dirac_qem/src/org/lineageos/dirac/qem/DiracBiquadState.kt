@@ -36,7 +36,29 @@ import org.lineageos.dirac.biquad.IDiracBiquadState
 object DiracBiquadState {
     private const val SERVICE_NAME = "dirac_biquad_state"
 
-    fun publish(context: Context) {
+    /** No usable stream volume; the effect leaves the loudness tilt at identity. */
+    const val UNKNOWN_VOLUME_DB = -1.0
+
+    /**
+     * The last attenuation the volume observer resolved. It is republished with
+     * the rest of the state, so an enable or a band change does not drop the
+     * tilt while the volume itself has not moved.
+     */
+    @Volatile
+    private var lastVolumeDb = UNKNOWN_VOLUME_DB
+
+    /** Republishes the state with the last known stream attenuation. */
+    fun publish(context: Context) = publish(context, lastVolumeDb)
+
+    /**
+     * Republishes the state with an explicit stream attenuation in dB below the
+     * reference. A missing, non-finite or non-positive volume publishes the
+     * unknown sentinel, never 0.
+     */
+    fun publish(context: Context, volumeDb: Double) {
+        val sanitized =
+            if (volumeDb.isFinite() && volumeDb > 0.0) volumeDb else UNKNOWN_VOLUME_DB
+        lastVolumeDb = sanitized
         if (!DiracQemEffect.isA2dpFallbackAvailable(context)) {
             return
         }
@@ -46,6 +68,7 @@ object DiracBiquadState {
                 DiracQemEffect.isEnabled(context),
                 DiracQemEffect.isA2dpFallbackEnabled(context),
                 DiracQemEffect.currentBands(context),
+                sanitized,
             )
         } catch (e: RemoteException) {
             DiracTrace.log(TAG) { "publish failed: ${e.message}" }
