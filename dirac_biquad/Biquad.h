@@ -33,11 +33,18 @@ class Biquad {
   public:
     void Reset();
 
-    // `q` is the quality factor for the peaking and high-pass types, and the
-    // shelf slope S for the shelving types. `gainDb` applies to peaking and
-    // shelving only.
+    // `frequencyHz` is a digital corner: the coefficient set realises, at this
+    // rate, a prototype whose corner is pre-warped to land on it.  `q` is the
+    // quality factor for the peaking and high-pass types, and the shelf slope S
+    // for the shelving types. `gainDb` applies to peaking and shelving only.
     void SetFilter(BiquadType type, double sampleRateHz, double frequencyHz, double q,
                    double gainDb);
+
+    // `cornerHz` is the corner of an analog prototype.  The bilinear transform
+    // is pre-warped for this rate, so the same arguments realise the same
+    // analog response at every sample rate instead of a rate-specific one.
+    void SetPrototype(BiquadType type, double sampleRateHz, double cornerHz, double q,
+                      double gainDb);
 
     float ProcessSample(float x);
 
@@ -45,6 +52,8 @@ class Biquad {
     double MagnitudeAt(double sampleRateHz, double frequencyHz) const;
 
   private:
+    void SetCoefficients(BiquadType type, double w0, double q, double gainDb);
+
     double b0_ = 1.0;
     double b1_ = 0.0;
     double b2_ = 0.0;

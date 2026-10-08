@@ -16,6 +16,7 @@
 
 #include "DiracBiquadFilter.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include "Biquad.h"
@@ -37,15 +38,30 @@ struct SignatureSection {
 
 // Approximation of the Dirac neutral signature: the FIR magnitude response of
 // usecase/eheadset/defaults/941 in dirac_resource.dar, the defaults the module
-// loads even with the user EQ zeroed, fitted as five RBJ sections (0.57 dB RMS
-// over 20 Hz-19 kHz). The design parameters are rate independent, so each
-// section is rebuilt for the stream rate.
+// loads even with the user EQ zeroed. The twelve RBJ sections below carry an
+// analog prototype (corner frequency, Q, gain); Biquad::SetPrototype pre-warps
+// the bilinear transform for the stream rate, so one table realises the same
+// analog response at 44.1, 48, 96 and 192 kHz. Both rates are compared against
+// the shared analog response: 1.31 dB RMS and 2.30 dB at worst over
+// 20 Hz-16 kHz, and 1.18 / 1.49 dB RMS over 16-20 kHz, where the two DAR
+// designs themselves differ by about 1.4 dB. Corners stay under 0.45*44100 Hz,
+// Q under 3.5, and adjacent corners at least 1.33x apart, so no section relies
+// on bilinear warping from above Nyquist and no pair cancels. The design
+// parameters are rate independent, so each section is rebuilt for the stream
+// rate.
 constexpr SignatureSection kSignature[DiracBiquadFilter::kSignatureCount] = {
-        {BiquadType::kLowShelf, 243.1, 0.522, -19.45},
-        {BiquadType::kPeaking, 1397.9, 3.968, -4.18},
-        {BiquadType::kPeaking, 4052.6, 2.330, -3.42},
-        {BiquadType::kHighShelf, 5680.6, 4.889, 8.25},
-        {BiquadType::kPeaking, 18897.9, 0.300, -38.00},
+        {BiquadType::kLowShelf, 20.05, 0.491, -18.66},
+        {BiquadType::kPeaking, 28.07, 0.633, -4.61},
+        {BiquadType::kPeaking, 78.62, 0.728, -5.97},
+        {BiquadType::kPeaking, 121.33, 0.435, -5.04},
+        {BiquadType::kPeaking, 172.84, 0.497, -1.49},
+        {BiquadType::kPeaking, 473.89, 0.927, -7.10},
+        {BiquadType::kPeaking, 862.44, 0.440, 11.71},
+        {BiquadType::kPeaking, 1144.71, 2.749, -3.66},
+        {BiquadType::kPeaking, 2856.43, 0.317, -15.13},
+        {BiquadType::kPeaking, 4976.07, 0.971, -23.59},
+        {BiquadType::kPeaking, 6657.38, 0.454, 26.48},
+        {BiquadType::kHighShelf, 17217.39, 1.070, -30.00},
 };
 
 double HalfDbToDb(int halfDb) {
@@ -64,10 +80,10 @@ bool DiracBiquadFilter::Configure(unsigned sampleRateHz, unsigned channelCount,
 
     for (size_t section = 0; section < kSignatureCount; ++section) {
         for (unsigned ch = 0; ch < channelCount; ++ch) {
-            signature_[ch][section].SetFilter(kSignature[section].type, sampleRateHz,
-                                              kSignature[section].frequencyHz,
-                                              kSignature[section].q,
-                                              kSignature[section].gainDb);
+            signature_[ch][section].SetPrototype(kSignature[section].type, sampleRateHz,
+                                                 kSignature[section].frequencyHz,
+                                                 kSignature[section].q,
+                                                 kSignature[section].gainDb);
         }
     }
     for (size_t band = 0; band < kBandCount; ++band) {
@@ -96,31 +112,72 @@ void DiracBiquadFilter::Reset() {
     }
 }
 
-// The signature contributes gain too, so the preamp must answer to the real
-// peak of the whole cascade, not the largest single EQ band. The signature and
-// the EQ share one coefficient set across channels, so channel 0 is enough.
+// Static headroom policy: the signature contributes gain too, so the preamp
+// answers to the real peak of the whole cascade rather than to the largest
+// single EQ band, and attenuates the chain only when that peak exceeds unity.
+// A coarse probe can step over a narrow resonance, so its maximum is refined
+// on a log-frequency axis before the gain is set. The signature and the EQ
+// share one coefficient set across channels, so channel 0 is enough.
 float DiracBiquadFilter::ComputePreampGain(unsigned sampleRateHz) const {
-    constexpr size_t kProbeCount = 64;
+    constexpr size_t kCoarsePoints = 961;  // ~1/96 octave over 20 Hz-20 kHz
     constexpr double kMinHz = 20.0;
     constexpr double kMaxHz = 20000.0;
+    constexpr double kInvPhi = 0.6180339887498949;
+    constexpr double kProbeMargin = 1.0012;  // 0.01 dB of conservative headroom
 
-    double peak = 0.0;
-    for (size_t probe = 0; probe < kProbeCount; ++probe) {
-        const double t = static_cast<double>(probe) / static_cast<double>(kProbeCount - 1);
-        const double frequencyHz = kMinHz * std::pow(kMaxHz / kMinHz, t);
-        double magnitude = 1.0;
-        for (size_t section = 0; section < kSignatureCount; ++section) {
-            magnitude *= signature_[0][section].MagnitudeAt(sampleRateHz, frequencyHz);
-        }
-        for (size_t band = 0; band < kBandCount; ++band) {
-            magnitude *= stages_[0][band].MagnitudeAt(sampleRateHz, frequencyHz);
-        }
+    const double logMin = std::log(kMinHz);
+    const double logMax = std::log(kMaxHz);
+    const double step = (logMax - logMin) / static_cast<double>(kCoarsePoints - 1);
+
+    double peak = CascadeMagnitudeAt(sampleRateHz, kMinHz);
+    double peakLogHz = logMin;
+    for (size_t point = 1; point < kCoarsePoints; ++point) {
+        const double logHz = logMin + step * static_cast<double>(point);
+        const double magnitude = CascadeMagnitudeAt(sampleRateHz, std::exp(logHz));
         if (magnitude > peak) {
             peak = magnitude;
+            peakLogHz = logHz;
         }
     }
 
-    return peak > 1.0 ? static_cast<float>(1.0 / peak) : 1.0f;
+    // Golden-section refinement of the coarse maximum, bracketed by its
+    // neighbouring probe frequencies.
+    double low = std::max(logMin, peakLogHz - step);
+    double high = std::min(logMax, peakLogHz + step);
+    double x1 = high - kInvPhi * (high - low);
+    double x2 = low + kInvPhi * (high - low);
+    double m1 = CascadeMagnitudeAt(sampleRateHz, std::exp(x1));
+    double m2 = CascadeMagnitudeAt(sampleRateHz, std::exp(x2));
+    for (int iteration = 0; iteration < 40; ++iteration) {
+        if (m1 < m2) {
+            low = x1;
+            x1 = x2;
+            m1 = m2;
+            x2 = low + kInvPhi * (high - low);
+            m2 = CascadeMagnitudeAt(sampleRateHz, std::exp(x2));
+        } else {
+            high = x2;
+            x2 = x1;
+            m2 = m1;
+            x1 = high - kInvPhi * (high - low);
+            m1 = CascadeMagnitudeAt(sampleRateHz, std::exp(x1));
+        }
+    }
+    peak = std::max(peak, std::max(m1, m2));
+
+    const double guardedPeak = peak * kProbeMargin;
+    return guardedPeak > 1.0 ? static_cast<float>(1.0 / guardedPeak) : 1.0f;
+}
+
+double DiracBiquadFilter::CascadeMagnitudeAt(double sampleRateHz, double frequencyHz) const {
+    double magnitude = 1.0;
+    for (size_t section = 0; section < kSignatureCount; ++section) {
+        magnitude *= signature_[0][section].MagnitudeAt(sampleRateHz, frequencyHz);
+    }
+    for (size_t band = 0; band < kBandCount; ++band) {
+        magnitude *= stages_[0][band].MagnitudeAt(sampleRateHz, frequencyHz);
+    }
+    return magnitude;
 }
 
 float DiracBiquadFilter::ProcessSample(float x, unsigned channel) {

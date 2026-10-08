@@ -38,7 +38,22 @@ void Biquad::SetFilter(BiquadType type, double sampleRateHz, double frequencyHz,
         return;
     }
 
-    const double w0 = 2.0 * kPi * frequencyHz / sampleRateHz;
+    SetCoefficients(type, 2.0 * kPi * frequencyHz / sampleRateHz, q, gainDb);
+}
+
+void Biquad::SetPrototype(BiquadType type, double sampleRateHz, double cornerHz, double q,
+                          double gainDb) {
+    if (sampleRateHz <= 0.0 || cornerHz <= 0.0 || q <= 0.0) {
+        return;
+    }
+
+    // Analog corner wa to digital w0: wa = 2*fs*tan(w0/2), so pre-warping the
+    // prototype corner wa = 2*pi*cornerHz gives w0 = 2*atan(pi*cornerHz/fs),
+    // which stays inside (0, pi) for every corner and rate.
+    SetCoefficients(type, 2.0 * std::atan(kPi * cornerHz / sampleRateHz), q, gainDb);
+}
+
+void Biquad::SetCoefficients(BiquadType type, double w0, double q, double gainDb) {
     const double cosW0 = std::cos(w0);
     const double sinW0 = std::sin(w0);
     const double a = std::pow(10.0, gainDb / 40.0);

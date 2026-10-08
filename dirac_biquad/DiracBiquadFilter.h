@@ -49,9 +49,13 @@
 // Before the user EQ the chain applies a fixed approximation of the module's
 // own flat-EQ signature: the FIR response of usecase/eheadset/defaults/941 in
 // dirac_resource.dar (the Dirac defaults the module loads even when the ACDB
-// user EQ is zeroed), fitted as five RBJ sections to ~0.6 dB RMS. It is a
-// neutral approximation of the eheadset default, not the per-model hdsound
-// filter and not the speaker ispeaker/921 voice.
+// user EQ is zeroed), fitted as twelve RBJ sections referenced to 1 kHz over
+// the whole 20 Hz-20 kHz band: 1.31 dB RMS and 2.30 dB at worst over
+// 20 Hz-16 kHz at 44.1 and 48 kHz, and 1.18 / 1.49 dB RMS over 16-20 kHz. The
+// parameters are an analog prototype, so the pre-warped bilinear transform in
+// Biquad::SetPrototype keeps the response consistent at every supported rate.
+// It is a neutral approximation of the eheadset default, not the per-model
+// hdsound filter and not the speaker ispeaker/921 voice.
 class DiracBiquadFilter {
   public:
     static constexpr size_t kBandCount = 7;
@@ -63,7 +67,7 @@ class DiracBiquadFilter {
 
     // Fixed Dirac flat-EQ signature sections (RBJ design parameters; the
     // coefficients are rebuilt for the stream rate in Configure).
-    static constexpr size_t kSignatureCount = 5;
+    static constexpr size_t kSignatureCount = 12;
 
     // Builds the curve for the stream rate and channel count from the half-dB
     // band gains. Returns false for an unsupported combination, in which case
@@ -81,6 +85,10 @@ class DiracBiquadFilter {
 
   private:
     float ProcessSample(float x, unsigned channel);
+
+    // |H(f)| of the signature and EQ cascade on channel 0, whose coefficients
+    // every other channel shares.
+    double CascadeMagnitudeAt(double sampleRateHz, double frequencyHz) const;
 
     // Unity, or the attenuation that keeps the true cascade peak at 0 dBFS.
     float ComputePreampGain(unsigned sampleRateHz) const;
