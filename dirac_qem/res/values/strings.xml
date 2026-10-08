@@ -2,8 +2,10 @@
 <resources>
     <string name="dirac_title">Dirac audio</string>
     <string name="dirac_enable_title">Dirac audio</string>
-    <string name="dirac_enable_summary">Applies the OnePlus Dirac tuning to the built-in speaker and wired headset</string>
+    <string name="dirac_enable_summary">Applies the OnePlus Dirac tuning to audio outputs.</string>
     <string name="dirac_model_title">Headset model</string>
     <string name="dirac_style_title">Preset</string>
     <string name="dirac_eq_title">Custom equalizer</string>
+    <string name="dirac_biquad_fallback_title">Enable software approximation fallback</string>
+    <string name="dirac_biquad_fallback_summary">Lets Bluetooth and other non-DSP audio routes receive a Dirac effect approximation; it does not replace or override the built-in tuning.</string>
 </resources>
