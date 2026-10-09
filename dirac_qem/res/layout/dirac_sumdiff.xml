@@ -7,9 +7,11 @@
     android:paddingBottom="16dp">
 
     <TextView
+        android:id="@+id/dirac_sumdiff_value"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="@string/dirac_sumdiff_title"
+        android:gravity="center"
+        android:paddingBottom="6dp"
         android:textSize="12sp" />
 
     <LinearLayout
@@ -33,4 +35,13 @@
             android:scaleType="centerInside"
             android:src="@drawable/ic_reset" />
     </LinearLayout>
+
+    <TextView
+        android:id="@+id/dirac_sumdiff_label"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:paddingTop="6dp"
+        android:text="@string/dirac_sumdiff_title"
+        android:textSize="12sp" />
 </LinearLayout>

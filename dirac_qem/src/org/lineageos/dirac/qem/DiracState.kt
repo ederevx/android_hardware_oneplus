@@ -61,6 +61,13 @@ object DiracState {
     private const val KEY_A2DP_FALLBACK = "a2dp_fallback"
     private const val KEY_SUMDIFF = "sumdiff"
 
+    /**
+     * The width a fresh install starts at and the reset target: the middle of
+     * the range, which the slider also draws its detent under. 0.0 stays the
+     * neutral value the effect bypasses and the disable path restores.
+     */
+    const val SUMDIFF_DEFAULT = 0.5f
+
     /** The loudness law is flat past this; it only bounds a mute. */
     private const val MAX_VOLUME_DB = 120.0
 
@@ -135,7 +142,7 @@ object DiracState {
         val p = prefs(context)
         enabled = p.getBoolean(KEY_ENABLED, false)
         a2dpFallback = p.getBoolean(KEY_A2DP_FALLBACK, false)
-        sumdiff = p.getFloat(KEY_SUMDIFF, 0.0f)
+        sumdiff = p.getFloat(KEY_SUMDIFF, SUMDIFF_DEFAULT)
         style = p.getInt(KEY_STYLE, DiracPresets.STYLE_NONE)
         model = p.getInt(KEY_MODEL, 0)
         movie = p.getBoolean(KEY_MOVIE, false)
