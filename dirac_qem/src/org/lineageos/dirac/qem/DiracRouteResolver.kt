@@ -24,17 +24,26 @@ import android.media.AudioManager
 import android.util.Log
 
 /**
- * Decides whether the wired output is live, from the jack's own connection
- * signal only.
+ * The one owner of the live output the user hears, and of what that output
+ * means for the widening.
  *
- * The audio policy's device list is not a connection source on this platform:
+ * The sink is read, never remembered: every call re-reads the platform, so a
+ * page opened while a route is already live still sees it, and a connection
+ * this process was not running for is never missed. [DiracState] keeps a copy
+ * only to know when a change is worth telling a live page about.
+ *
+ * The two sinks need different sources, which is why neither the policy's
+ * device list nor a broadcast is enough on its own. The audio policy's device
+ * list is not a connection source for the wired sinks on this platform:
  * AudioPolicyManager attaches every output device the HAL declares to its
- * available-output set as the HW module loads, and AudioManager.isWiredHeadsetOn()
- * and getDevices(GET_DEVICES_OUTPUTS) both read that set, so they report the
- * wired headset with nothing in the jack. The sticky HEADSET_PLUG broadcast
- * that AudioService's AudioDeviceInventory sends on every wired connect and
- * disconnect carries the true jack state; it is the only input here. Nothing
- * is remembered from an earlier resolution.
+ * available-output set as the HW module loads, so AudioManager.isWiredHeadsetOn()
+ * and getDevices(GET_DEVICES_OUTPUTS) both report the wired headset with
+ * nothing in the jack; the sticky HEADSET_PLUG broadcast that AudioService's
+ * AudioDeviceInventory sends on every wired connect and disconnect is the true
+ * jack state. The Bluetooth sink is the opposite case: an A2DP output device
+ * exists only while a device is connected, so its presence in that same list is
+ * the connection signal, while the profile state would need a second source --
+ * and its broadcast is not delivered to a process that was not running.
  */
 object DiracRouteResolver {
     private const val TAG = "DiracQemRoute"
@@ -45,21 +54,57 @@ object DiracRouteResolver {
         AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
     )
 
-    fun resolve(context: Context): Int {
-        val plugged = wiredPlugged(context)
-        val route = if (plugged) DiracState.OUTPUT_EXTERNAL else DiracState.OUTPUT_INTERNAL
-        Log.d(
-            TAG,
-            "considered=[${wiredCandidates(context)}] plugged=$plugged " +
-                "route=${if (plugged) "external" else "internal"}",
-        )
-        return route
+    /**
+     * The live output. The route carries what it means, so the app's questions
+     * about it -- whether the DSP voices the widening, which ADSP module the
+     * frames address -- are answered next to the route instead of by a second
+     * copy of the same knowledge somewhere else.
+     */
+    enum class Sink {
+        /** The on-device sinks, speaker first among them. */
+        SPEAKER,
+
+        /** The wired jack. */
+        WIRED,
+
+        /** A2DP, and any other sink the Dirac DSP does not voice. */
+        BLUETOOTH;
+
+        /**
+         * Whether the Dirac DSP voices this sink at all, so the ADSP frames can
+         * land on it: the biquad effect gates itself off for speaker, wired
+         * headset, wired headphone and line, owns the widening on the sinks it
+         * does not gate, and on those same sinks no Dirac topology has a live
+         * stream for a frame to reach.
+         */
+        val dspVoiced: Boolean get() = this != BLUETOOTH
     }
 
+    /** Reads the live sink. */
+    fun sink(context: Context): Sink {
+        val plugged = wiredPlugged(context)
+        val bluetooth = !plugged && bluetoothAttached(context)
+        val sink = when {
+            plugged -> Sink.WIRED
+            bluetooth -> Sink.BLUETOOTH
+            else -> Sink.SPEAKER
+        }
+        // Information, not debug: this is the decision the settings row and the
+        // HAL push both follow, and it is cheap only on a route event.
+        Log.i(
+            TAG,
+            "sink=$sink jack_plugged=$plugged a2dp_attached=$bluetooth " +
+                "wired_available=[${wiredCandidates(context)}]",
+        )
+        return sink
+    }
+
+    /**
+     * The jack's own connection signal. A platform that refuses the sticky
+     * read, or has not sent one since boot, leaves the sink unwired, which is
+     * the safe answer for a jack with no known state.
+     */
     private fun wiredPlugged(context: Context): Boolean {
-        // A platform that refuses the sticky read, or has not sent one since
-        // boot, leaves the route internal, which is the safe answer for a jack
-        // with no known state.
         val sticky = try {
             context.registerReceiver(null, IntentFilter(Intent.ACTION_HEADSET_PLUG))
         } catch (e: Exception) {
@@ -69,15 +114,23 @@ object DiracRouteResolver {
     }
 
     /**
+     * Whether an A2DP sink is attached. Its output device is created on
+     * connection and torn down on disconnect, unlike the wired sinks above.
+     */
+    private fun bluetoothAttached(context: Context): Boolean =
+        outputDevices(context).any { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP }
+
+    private fun outputDevices(context: Context): List<AudioDeviceInfo> =
+        context.getSystemService(AudioManager::class.java)
+            ?.getDevices(AudioManager.GET_DEVICES_OUTPUTS)?.toList() ?: emptyList()
+
+    /**
      * The wired sink devices the policy reports as available. They are logged
      * only so the device check can see that the list is not the connection
      * signal; it carries the wired headset with nothing plugged.
      */
-    private fun wiredCandidates(context: Context): String {
-        val devices = context.getSystemService(AudioManager::class.java)
-            ?.getDevices(AudioManager.GET_DEVICES_OUTPUTS) ?: return "none"
-        return devices.filter { it.type in WIRED_SINK_TYPES }
+    private fun wiredCandidates(context: Context): String =
+        outputDevices(context).filter { it.type in WIRED_SINK_TYPES }
             .joinToString(",") { "type=${it.type}" }
             .ifEmpty { "none" }
-    }
 }
