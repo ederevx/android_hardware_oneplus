@@ -24,6 +24,7 @@
 #include "DiracBiquadTable.h"
 #include "LoudnessTilt.h"
 #include "LowBandMono.h"
+#include "StereoWidth.h"
 
 // Host-side biquad curve with Dirac-QEM parity.
 //
@@ -67,9 +68,10 @@
 //
 // The module's cross-channel `noise` Sum/Diff behaviour is not expressible by
 // the per-channel cascade; LowBandMono restores its low-frequency half by
-// high-passing the side signal, folding the low band to mono. The mid path is
-// untouched, so the signature, EQ and tilt keep their exact per-channel
-// response.
+// high-passing the side signal, folding the low band to mono, and StereoWidth
+// applies the widening half as a final side gain. Both act on the mid/side
+// pair only, so the signature, EQ and tilt keep their exact per-channel
+// response: the mid path is untouched and the widening scales only the side.
 class DiracBiquadFilter {
   public:
     static constexpr size_t kBandCount = 7;
@@ -94,6 +96,11 @@ class DiracBiquadFilter {
     // the preamp probe never sees it.
     void SetAttenuationDb(double attenuationDb);
 
+    // Enables the final mid/side widening. `sumDiff` is the width in 0..1; it
+    // is a pure side gain applied after every filter stage, so it never changes
+    // the cascade's per-channel response or group delay.
+    void SetSumDiff(float sumDiff);
+
     void Reset();
 
     // Applies the curve to an interleaved PCM buffer. `input` and `output` may
@@ -116,6 +123,7 @@ class DiracBiquadFilter {
     Biquad signature_[kMaxChannels][kSignatureCount];
     LoudnessTilt tilt_;
     LowBandMono mono_;
+    StereoWidth width_;
     float preampGain_ = 1.0f;
     unsigned channelCount_ = 0;
     bool configured_ = false;

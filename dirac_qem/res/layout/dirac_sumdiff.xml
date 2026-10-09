@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingTop="16dp"
+    android:paddingBottom="16dp">
+
+    <TextView
+        android:id="@+id/dirac_sumdiff_value"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:paddingBottom="6dp"
+        android:textSize="12sp" />
+
+    <org.lineageos.dirac.qem.HorizontalSlider
+        android:id="@+id/dirac_sumdiff_slider"
+        android:layout_width="match_parent"
+        android:layout_height="40dp" />
+
+    <!-- The title row is exactly as tall as the reset button, so the title sits
+         the same distance below the bar as the magnitude sits above it: the
+         value's bottom padding and the title's share of this row are both 6dp
+         past the slider's own half-height. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="28dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <!-- Balances the reset button so the title stays optically centred. -->
+        <Space
+            android:layout_width="40dp"
+            android:layout_height="1dp" />
+
+        <TextView
+            android:id="@+id/dirac_sumdiff_label"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="@string/dirac_sumdiff_title"
+            android:textSize="12sp" />
+
+        <ImageButton
+            android:id="@+id/dirac_sumdiff_reset"
+            android:layout_width="40dp"
+            android:layout_height="28dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/dirac_sumdiff_reset"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_reset" />
+    </LinearLayout>
+</LinearLayout>
