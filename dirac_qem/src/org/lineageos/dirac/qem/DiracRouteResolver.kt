@@ -71,12 +71,13 @@ object DiracRouteResolver {
         BLUETOOTH;
 
         /**
-         * Whether the Dirac DSP voices the widening here, so the host
-         * StereoWidth stage must stay off: the biquad effect gates itself off
-         * for speaker, wired headset, wired headphone and line, and owns the
-         * widening on the sinks it does not gate.
+         * Whether the Dirac DSP voices this sink at all, so the ADSP frames can
+         * land on it: the biquad effect gates itself off for speaker, wired
+         * headset, wired headphone and line, owns the widening on the sinks it
+         * does not gate, and on those same sinks no Dirac topology has a live
+         * stream for a frame to reach.
          */
-        val dspVoicesWidening: Boolean get() = this != BLUETOOTH
+        val dspVoiced: Boolean get() = this != BLUETOOTH
     }
 
     /** Reads the live sink. */

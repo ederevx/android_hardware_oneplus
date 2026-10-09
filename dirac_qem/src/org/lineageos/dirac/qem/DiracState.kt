@@ -270,7 +270,7 @@ object DiracState {
     fun sink(context: Context): DiracRouteResolver.Sink = DiracRouteResolver.sink(context)
 
     /** Whether the DSP voices the widening on the live sink. */
-    fun isWideningDspHandled(context: Context): Boolean = sink(context).dspVoicesWidening
+    fun isWideningDspHandled(context: Context): Boolean = !sink(context).dspVoiced
 
     /** Whether the live sink is the Bluetooth one, which has its own loudness. */
     fun isBluetoothConnected(context: Context): Boolean =
