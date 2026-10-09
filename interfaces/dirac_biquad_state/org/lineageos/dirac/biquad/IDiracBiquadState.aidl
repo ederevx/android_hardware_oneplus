@@ -30,4 +30,22 @@ interface IDiracBiquadState {
      * when the volume is unknown (the effect then leaves the tilt off).
      */
     void setState(boolean enabled, boolean fallback, in int[] bandsHalfDb, double volumeDb);
+
+    /**
+     * Whether a state has been persisted since this service started. The
+     * reader methods below are only meaningful when this is true.
+     */
+    boolean hasState();
+
+    /** The enabled flag of the last persisted state. */
+    boolean getEnabled();
+
+    /** The fallback flag of the last persisted state. */
+    boolean getFallback();
+
+    /** The seven half-dB band gains of the last persisted state. */
+    int[] getBandsHalfDb();
+
+    /** The stream attenuation of the last persisted state, in dB. */
+    double getVolumeDb();
 }
