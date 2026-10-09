@@ -28,6 +28,11 @@ import kotlin.math.sin
  * Holds one stereo mixer stream open for as long as it plays, so the ADM RX
  * (path=0) copp the QEM frames target stays registered on the device while they
  * are sent. The stream usage and preferred output come from [ToneRoute].
+ *
+ * A write result is never discarded. A track can be up, playing by its own
+ * account and still writing into a failing ADM setup, which is silent and
+ * otherwise invisible, so the first negative error is logged where it happens
+ * and the total is kept for the caller to report.
  */
 class TonePlayer(
     private val route: ToneRoute,
@@ -40,6 +45,11 @@ class TonePlayer(
 
     @Volatile
     private var playing = false
+
+    /** Failed writes seen by the writer, 0 while the tone is really going out. */
+    @Volatile
+    var failedWrites: Int = 0
+        private set
 
     /** Audio session of the live stream, or [AudioManager.ERROR] when idle. */
     val sessionId: Int
@@ -97,12 +107,31 @@ class TonePlayer(
     }
 
     private fun writeLoop(target: AudioTrack, block: ShortArray) {
+        var consecutive = 0
         try {
             while (playing) {
-                target.write(block, 0, block.size)
+                val written = target.write(block, 0, block.size)
+                if (written >= 0) {
+                    consecutive = 0
+                    continue
+                }
+                failedWrites++
+                consecutive++
+                if (failedWrites == 1) {
+                    Log.e(TAG, "tone write failed: err=$written; the tone may be silent")
+                }
+                if (consecutive >= MAX_CONSECUTIVE_FAILURES) {
+                    Log.e(TAG, "tone write failed $consecutive times in a row, giving up")
+                    return
+                }
+                Thread.sleep(WRITE_FAIL_SLEEP_MS)
             }
         } catch (t: Throwable) {
             Log.e(TAG, "tone writer stopped", t)
+        } finally {
+            if (failedWrites > 0) {
+                Log.e(TAG, "tone writes failed ${failedWrites} times in total")
+            }
         }
     }
 
@@ -133,5 +162,7 @@ class TonePlayer(
         const val PERIODS_PER_BLOCK = 64
         const val MIN_BUFFER_FRAMES = 8192
         const val WRITER_JOIN_MS = 500L
+        const val WRITE_FAIL_SLEEP_MS = 5L
+        const val MAX_CONSECUTIVE_FAILURES = 200
     }
 }

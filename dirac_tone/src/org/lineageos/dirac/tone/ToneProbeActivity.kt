@@ -99,7 +99,13 @@ private fun parseNumber(raw: String?): Int? = raw?.trim()?.let {
  * With no params the single `param`/`value` pair is sent with the request's
  * caltype. Other extras: delay ms before the first frame (2000), gap ms between
  * topo/device combos (1200), seqgap ms between the params of one combo (150),
- * freq Hz (1000). The long names
+ * freq Hz (1000).
+ *
+ * `--ez silent true` opens no tone stream at all: the frames go out against
+ * whatever output is already live (music, for an ear test), which is also the
+ * cleaner trace, because a probe stream of this app's own adds ADM stream-setup
+ * errors to dmesg and masks the audio being judged. The hold then runs for
+ * `duration` with nothing playing. The long names
  * durationMs/delayMs/gapMs/sndDevIds/appType/sampleRate/frequencyHz are accepted
  * as aliases of the short ones.
  */
@@ -114,12 +120,16 @@ class ToneProbeActivity : Activity() {
     }
 
     private fun run(request: Request, route: ToneRoute) {
-        val player = TonePlayer(route, frequencyHz = request.frequencyHz.toDouble())
+        val player = if (request.silent) null else
+            TonePlayer(route, frequencyHz = request.frequencyHz.toDouble())
         val frames = QemFrames(this)
         try {
-            if (!player.start()) {
+            if (player != null && !player.start()) {
                 Log.e(TAG, "no tone, no frames sent")
                 return
+            }
+            if (player == null) {
+                Log.i(TAG, "silent: no tone stream opened; frames go out against the live output")
             }
             Thread.sleep(request.delayMs)
             var index = 0
@@ -161,7 +171,12 @@ class ToneProbeActivity : Activity() {
         } catch (t: Throwable) {
             Log.e(TAG, "probe failed", t)
         } finally {
-            player.stop()
+            player?.let {
+                if (it.failedWrites > 0) {
+                    Log.e(TAG, "tone: ${it.failedWrites} failed writes, it may not have sounded")
+                }
+                it.stop()
+            }
             runOnUiThread { finish() }
         }
     }
@@ -178,6 +193,7 @@ class ToneProbeActivity : Activity() {
         val persist: Int,
         val module: Int,
         val value: Int,
+        val silent: Boolean,
         val entries: List<Entry>,
         val seqGapMs: Long,
         val frequencyHz: Int,
@@ -205,6 +221,7 @@ class ToneProbeActivity : Activity() {
                     persist = intExtra(intent, EXTRA_PERSIST, default = DEFAULT_PERSIST),
                     module = intExtra(intent, EXTRA_MODULE, default = QemFrames.MODULE_INTERNAL),
                     value = value,
+                    silent = boolExtra(intent, EXTRA_SILENT),
                     entries = parseEntries(stringExtra(intent, EXTRA_PARAMS))
                         .ifEmpty { listOf(Entry(param, valueText = null, isFloat = false,
                             calType = null)) },
@@ -226,6 +243,19 @@ class ToneProbeActivity : Activity() {
                     }
                 }
                 return default
+            }
+
+            /** Accepts a boolean extra, or the strings true/1 for `--es`. */
+            private fun boolExtra(intent: Intent?, vararg names: String): Boolean {
+                for (name in names) {
+                    val raw = intent?.extras?.get(name) ?: continue
+                    when (raw) {
+                        is Boolean -> return raw
+                        is Int -> return raw != 0
+                        is String -> return raw.equals("true", ignoreCase = true) || raw == "1"
+                    }
+                }
+                return false
             }
 
             private fun stringExtra(intent: Intent?, vararg names: String): String? {
@@ -260,6 +290,7 @@ class ToneProbeActivity : Activity() {
             private const val EXTRA_VALUE = "value"
             private const val EXTRA_PARAMS = "params"
             private const val EXTRA_SEQGAP = "seqgap"
+            private const val EXTRA_SILENT = "silent"
             private const val EXTRA_FREQ = "freq"
             private const val EXTRA_FREQUENCY = "frequencyHz"
 
