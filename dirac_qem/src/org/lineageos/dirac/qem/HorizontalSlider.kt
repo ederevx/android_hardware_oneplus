@@ -23,7 +23,8 @@ import android.view.MotionEvent
 /**
  * A horizontal stereo-width slider: the [BarSlider] geometry with the owned
  * Sum/Diff width (0..1) as its value, active from the left end and a thicker
- * 8 dp track with a 28x8 dp bar.
+ * 8 dp track with a 28x8 dp bar. The detent and the reset both mark the middle
+ * of the range, so the row rests centred rather than at the zero end.
  *
  * The slider keeps no value: it draws the width it drives straight from the
  * owned state and stages that value on a drag.
@@ -33,6 +34,9 @@ class HorizontalSlider @JvmOverloads constructor(
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0,
 ) : BarSlider(context, attrs, defStyleAttr) {
+
+    /** Reports each flushed value so the row can relabel from it. */
+    var onValueChanged: ((Float) -> Unit)? = null
 
     override val isVertical = false
     override val trackThickness = UiMetrics.dp(context, 8f)
@@ -63,6 +67,14 @@ class HorizontalSlider @JvmOverloads constructor(
     override fun axisPosition(event: MotionEvent): Float = event.x
 
     override fun currentValue(): Float = DiracState.sumDiff(context)
+
+    override fun resetValue(): Float = DiracState.SUMDIFF_DEFAULT
+
+    override fun detentValue(): Float = (minValue + maxValue) / 2f
+
+    override fun onValueFlushed(value: Float) {
+        onValueChanged?.invoke(value)
+    }
 
     override fun stageValue(value: Float): Boolean = DiracState.setSumDiff(context, value)
 

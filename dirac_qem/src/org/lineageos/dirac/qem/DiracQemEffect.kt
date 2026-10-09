@@ -32,6 +32,10 @@ import java.util.concurrent.atomic.AtomicReference
  * enable, 0x12D35 EQ enable, 0x12D36 28-byte coefficients, 0x12D67 sound-field
  * enable, plus the headset-only 0x12D03 / 0x12D04 filter select -- is written to
  * whichever module the active route names.
+ *
+ * Frames are sent only while the Dirac DSP voices the live sink. On a sink it
+ * does not voice no Dirac topology has a live stream, so the whole ADSP leg is
+ * skipped there and the host effect carries the state instead.
  */
 object DiracQemEffect {
     private const val TAG_BANDS = "DiracQemBands"
@@ -80,7 +84,7 @@ object DiracQemEffect {
      * headset route.
      */
     fun pushBands(context: Context) {
-        if (!DiracState.isEnabled(context)) {
+        if (!DiracState.isEnabled(context) || !adspVoiced(context)) {
             return
         }
         val appContext = context.applicationContext ?: context
@@ -123,12 +127,18 @@ object DiracQemEffect {
 
     /** Pushes the stored movie-mode scalar from the owned state. */
     fun setMovie(context: Context) {
+        if (!adspVoiced(context)) {
+            return
+        }
         send(context, SCALAR_TONAL_BALANCE, QemProtocol.scalarPayload(
             SCALAR_TONAL_BALANCE, if (DiracState.isMovie(context)) MOVIE_TONAL_BALANCE else DEFAULT_TONAL_BALANCE))
     }
 
     /** Pushes the stored Sum/Diff stereo width for the live route. */
     fun setSumDiff(context: Context) {
+        if (!adspVoiced(context)) {
+            return
+        }
         sendSumDiff(context, DiracState.output(context))
     }
 
@@ -141,12 +151,6 @@ object DiracQemEffect {
     private fun sendSumDiff(context: Context, output: Int) {
         sendOp(context, output, QemProtocol.PARAM_SUMDIFF,
             QemProtocol.floatPayload(DiracState.sumDiff(context)), QemProtocol.CALTYPE_RAW)
-    }
-
-    /** Pushes the stored Bluetooth-connected loudness scalar from the owned state. */
-    fun setBluetooth(context: Context) {
-        send(context, SCALAR_LOUDNESS, QemProtocol.scalarPayload(
-            SCALAR_LOUDNESS, if (DiracState.isBluetoothConnected(context)) BT_LOUDNESS else DEFAULT_LOUDNESS))
     }
 
     private fun send(context: Context, key: Int, payload: ByteArray) {
@@ -170,9 +174,17 @@ object DiracQemEffect {
         // The single load step: the stored values are read before anything is
         // composed or published.
         DiracState.load(context)
-        // A pass is where the route is re-read; the band path then reuses it.
-        val route = DiracState.resolveRoute(context, true)
+        // A pass is where the live sink is re-read and a page that is open is
+        // told it changed; the frames below then reuse the route it resolves.
+        DiracState.refreshRoute(context)
+        val route = DiracState.output(context)
         DiracState.publish(context)
+        // On the host-owned sink no Dirac topology has a live stream, so both
+        // the enable set and the disable frames could only fail there. The host
+        // effect carries the state on that sink, and was published above.
+        if (!adspVoiced(context)) {
+            return
+        }
         val applied = DiracState.appliedRoutes(context)
         if (!DiracState.isEnabled(context)) {
             // Clear every route the app enabled. An empty record means the app
@@ -211,6 +223,13 @@ object DiracQemEffect {
         sendOp(context, output, QemProtocol.PARAM_EQ_BANDS, QemProtocol.eqBandsPayload(bands))
         sendOp(context, output, QemProtocol.PARAM_SFX_ENABLE, QemProtocol.intPayload(1))
         sendSumDiff(context, output)
+        // The loudness scalar is derived from the live sink, so it rides the
+        // pass instead of an A2DP broadcast of its own: the value the DSP holds
+        // then always matches the sink, including the return to the default
+        // loudness when Bluetooth goes away.
+        sendOp(context, output, QemProtocol.PARAM_SCALAR_BASE + SCALAR_LOUDNESS,
+            QemProtocol.scalarPayload(SCALAR_LOUDNESS,
+                if (DiracState.isBluetoothConnected(context)) BT_LOUDNESS else DEFAULT_LOUDNESS))
         if (output == DiracState.OUTPUT_EXTERNAL) {
             sendOp(context, output, QemProtocol.PARAM_HDSOUND_ENABLE, QemProtocol.intPayload(1))
             sendOp(context, output, QemProtocol.PARAM_HDSOUND_FILTERIDX,
@@ -237,6 +256,14 @@ object DiracQemEffect {
         sendOp(context, output, QemProtocol.PARAM_SUMDIFF,
             QemProtocol.floatPayload(QemProtocol.SUMDIFF_OFF), QemProtocol.CALTYPE_RAW)
     }
+
+    /**
+     * Whether the ADSP leg can run at all: the live sink has to be one the Dirac
+     * DSP voices. On a sink it does not voice, every Dirac topology has no live
+     * stream, so a frame can only fail; [apply] publishes the host effect's
+     * state before this decides anything.
+     */
+    private fun adspVoiced(context: Context): Boolean = DiracState.sink(context).dspVoiced
 
     private fun routeBit(output: Int): Int = 1 shl output
 
