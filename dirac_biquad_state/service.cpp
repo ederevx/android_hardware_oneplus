@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "DiracBiquadConf.h"
@@ -39,11 +40,48 @@ class DiracBiquadStateService : public BnDiracBiquadState {
     ndk::ScopedAStatus setState(bool enabled, bool fallback,
                                 const std::vector<int32_t> &bandsHalfDb,
                                 double volumeDb) override {
-        if (!dirac::DiracBiquadConf::Write(enabled, fallback, bandsHalfDb, volumeDb)) {
+        if (!conf_.Write(enabled, fallback, bandsHalfDb, volumeDb)) {
             return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
         }
         return ndk::ScopedAStatus::ok();
     }
+
+    ndk::ScopedAStatus hasState(bool *_aidl_return) override {
+        dirac::DiracBiquadConf::State state;
+        *_aidl_return = conf_.GetState(&state);
+        return ndk::ScopedAStatus::ok();
+    }
+
+    ndk::ScopedAStatus getEnabled(bool *_aidl_return) override {
+        dirac::DiracBiquadConf::State state;
+        *_aidl_return = conf_.GetState(&state) && state.enabled;
+        return ndk::ScopedAStatus::ok();
+    }
+
+    ndk::ScopedAStatus getFallback(bool *_aidl_return) override {
+        dirac::DiracBiquadConf::State state;
+        *_aidl_return = conf_.GetState(&state) && state.fallback;
+        return ndk::ScopedAStatus::ok();
+    }
+
+    ndk::ScopedAStatus getBandsHalfDb(std::vector<int32_t> *_aidl_return) override {
+        dirac::DiracBiquadConf::State state;
+        if (conf_.GetState(&state)) {
+            *_aidl_return = std::move(state.bandsHalfDb);
+        }
+        return ndk::ScopedAStatus::ok();
+    }
+
+    ndk::ScopedAStatus getVolumeDb(double *_aidl_return) override {
+        dirac::DiracBiquadConf::State state;
+        if (conf_.GetState(&state)) {
+            *_aidl_return = state.volumeDb;
+        }
+        return ndk::ScopedAStatus::ok();
+    }
+
+  private:
+    dirac::DiracBiquadConf conf_;
 };
 
 }  // namespace

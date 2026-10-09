@@ -57,21 +57,20 @@ double ClampVolumeDb(double volumeDb) {
     return std::min(volumeDb, kMaxVolumeDb);
 }
 
-std::string Format(bool enabled, bool fallback, const std::vector<int32_t> &bandsHalfDb,
-                   double volumeDb) {
+std::string Format(const DiracBiquadConf::State &state) {
     char volume[32];
-    snprintf(volume, sizeof(volume), "%.1f", ClampVolumeDb(volumeDb));
+    snprintf(volume, sizeof(volume), "%.1f", state.volumeDb);
 
     std::string body = "# dirac a2dp state: enabled/fallback, seven half-dB band gains"
                         ", stream attenuation\n";
-    body += "enabled=" + std::string(enabled ? "1" : "0") + "\n";
-    body += "fallback=" + std::string(fallback ? "1" : "0") + "\n";
+    body += "enabled=" + std::string(state.enabled ? "1" : "0") + "\n";
+    body += "fallback=" + std::string(state.fallback ? "1" : "0") + "\n";
     body += "bands=";
-    for (size_t i = 0; i < bandsHalfDb.size(); ++i) {
+    for (size_t i = 0; i < state.bandsHalfDb.size(); ++i) {
         if (i != 0) {
             body += ",";
         }
-        body += std::to_string(ClampHalfDb(bandsHalfDb[i]));
+        body += std::to_string(state.bandsHalfDb[i]);
     }
     body += "\n";
     body += "volume_db=" + std::string(volume) + "\n";
@@ -87,15 +86,43 @@ bool DiracBiquadConf::Write(bool enabled, bool fallback, const std::vector<int32
         return false;
     }
 
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    State state;
+    state.enabled = enabled;
+    state.fallback = fallback;
+    state.bandsHalfDb.resize(bandsHalfDb.size());
+    for (size_t i = 0; i < bandsHalfDb.size(); ++i) {
+        state.bandsHalfDb[i] = ClampHalfDb(bandsHalfDb[i]);
+    }
+    state.volumeDb = ClampVolumeDb(volumeDb);
+
+    const std::string body = Format(state);
+    if (haveLastWritten_ && body == lastWritten_) {
+        // Byte-identical: leaving the file untouched keeps its mtime, and with
+        // it the effect's reload check, away from a needless re-read.
+        return true;
+    }
+
     mkdir(kDirectory, 0770);
 
     const std::string path = kPath;
     const std::string temp = path + ".tmp";
-    const std::string body = Format(enabled, fallback, bandsHalfDb, volumeDb);
 
     int fd = open(temp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, kFileMode);
     if (fd < 0) {
         LOG(ERROR) << "open " << temp << " failed: " << strerror(errno);
+        return false;
+    }
+
+    // init forks services with umask(077), so the mode argument alone leaves the
+    // file 0600 and the effect, which runs as audioserver, cannot read it. Set
+    // the mode on the descriptor actually written, before the rename publishes
+    // it.
+    if (fchmod(fd, kFileMode) != 0) {
+        LOG(ERROR) << "fchmod " << temp << " failed: " << strerror(errno);
+        close(fd);
+        unlink(temp.c_str());
         return false;
     }
 
@@ -124,6 +151,24 @@ bool DiracBiquadConf::Write(bool enabled, bool fallback, const std::vector<int32
         unlink(temp.c_str());
         return false;
     }
+
+    lastWritten_ = body;
+    haveLastWritten_ = true;
+    // The cache holds the normalized values, so a read-back reports exactly what
+    // the file now carries.
+    lastState_ = std::move(state);
+    return true;
+}
+
+bool DiracBiquadConf::GetState(State *state) const {
+    if (state == nullptr) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!haveLastWritten_) {
+        return false;
+    }
+    *state = lastState_;
     return true;
 }
 

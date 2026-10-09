@@ -47,7 +47,7 @@ object DiracRouteResolver {
 
     fun resolve(context: Context): Int {
         val plugged = wiredPlugged(context)
-        val route = if (plugged) DiracQemEffect.OUTPUT_EXTERNAL else DiracQemEffect.OUTPUT_INTERNAL
+        val route = if (plugged) DiracState.OUTPUT_EXTERNAL else DiracState.OUTPUT_INTERNAL
         Log.d(
             TAG,
             "considered=[${wiredCandidates(context)}] plugged=$plugged " +

@@ -139,7 +139,7 @@ class EqCurveView @JvmOverloads constructor(
     }
 
     private fun rebuildReason(): String? = when {
-        Cache.pathGeneration != DiracQemEffect.bandsGeneration -> "bands"
+        Cache.pathGeneration != DiracState.bandsGeneration -> "bands"
         Cache.width != width || Cache.height != height -> "size"
         Cache.paddingLeft != paddingLeft ||
             Cache.paddingTop != paddingTop ||
@@ -148,10 +148,10 @@ class EqCurveView @JvmOverloads constructor(
         else -> null
     }
 
-    /** Rebuilds the cached paths from the engine array and the view geometry. */
+    /** Rebuilds the cached paths from the owned band array and the view geometry. */
     private fun rebuild(reason: String) {
-        val generation = DiracQemEffect.bandsGeneration
-        val bands = DiracQemEffect.currentBands(context)
+        val generation = DiracState.bandsGeneration
+        val bands = DiracState.currentBands(context)
         val count = minOf(bands.size, DiracPresets.BAND_FREQS.size)
 
         val started = System.nanoTime()
