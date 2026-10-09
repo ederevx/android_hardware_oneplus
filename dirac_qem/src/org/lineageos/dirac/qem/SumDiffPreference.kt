@@ -29,7 +29,8 @@ import kotlin.math.roundToInt
  * The stereo-width row: a labelled [HorizontalSlider] that reads and writes the
  * owned Sum/Diff width, so the preference keeps no width state of its own and a
  * rebind simply repaints from it. The magnitude sits above the bar and the
- * title below it, mirroring an equalizer column laid on its side.
+ * title below it with the reset beside the title, so the bar owns the full
+ * width of the row.
  *
  * On an output the DSP voices the row is inert: the host stage the bar drives
  * never runs there, so the bar and its reset are greyed and the magnitude slot
