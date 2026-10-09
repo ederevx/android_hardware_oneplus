@@ -17,6 +17,8 @@
 #pragma once
 
 #include <cstdint>
+#include <mutex>
+#include <string>
 #include <vector>
 
 namespace dirac {
@@ -34,10 +36,30 @@ class DiracBiquadConf {
     // effect keeps the loudness tilt at identity.
     static constexpr double kUnknownVolumeDb = -1.0;
 
+    // The normalized values of the last state this writer put on disk.
+    struct State {
+        bool enabled = false;
+        bool fallback = false;
+        std::vector<int32_t> bandsHalfDb;
+        double volumeDb = kUnknownVolumeDb;
+    };
+
     // Writes enabled, fallback, the clamped band gains and the validated stream
-    // attenuation atomically.
-    static bool Write(bool enabled, bool fallback, const std::vector<int32_t> &bandsHalfDb,
-                      double volumeDb);
+    // attenuation atomically. A call whose serialized content matches the last
+    // one is a no-op: no temp file, no rename and no mtime change, so a
+    // repeated publish cannot make the effect reload. Returns true when the
+    // state is on disk, including the no-op case.
+    bool Write(bool enabled, bool fallback, const std::vector<int32_t> &bandsHalfDb,
+               double volumeDb);
+
+    // The last state successfully put on disk. False until the first Write.
+    bool GetState(State *state) const;
+
+  private:
+    mutable std::mutex mutex_;
+    std::string lastWritten_;
+    bool haveLastWritten_ = false;
+    State lastState_;
 };
 
 }  // namespace dirac

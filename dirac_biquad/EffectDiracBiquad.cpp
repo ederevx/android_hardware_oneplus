@@ -29,10 +29,11 @@
 // Dirac-QEM parity: the curve is seven peaking biquads, one per QEM band
 // centre, carrying the same half-dB gains the app pushes as PARAM_EQ_BANDS
 // (0x12D36). The state is read from /data/vendor/audio/dirac_qem.conf, with a
-// baked preset as the fallback; see DiracBiquadConfig. Parity covers the seven
-// user-EQ gains and the enable flag only: the DAR device correction, the
-// HDSOUND filter index and the limiter chain are not reproduced, so A2DP
-// cannot sound identical to the wired route.
+// baked preset as the initial default until the first successful read; a later
+// read failure keeps the last good state rather than bypassing the effect; see
+// DiracBiquadConfig. Parity covers the seven user-EQ gains and the enable flag
+// only: the DAR device correction, the HDSOUND filter index and the limiter
+// chain are not reproduced, so A2DP cannot sound identical to the wired route.
 //
 // Effect order: AudioFlinger applies the stream volume per track in
 // prepareTracks_l (mMasterVolume * track port volume) and runs the output
@@ -88,6 +89,10 @@ typedef struct dirac_biquad_object_s {
     // state file; DiracBiquadConfig::kUnknownVolumeDb means the tilt is
     // identity. Reloaded with the rest of the state.
     double volumeDb;
+    // The last distinct state-file load failure, so an EACCES or a torn file is
+    // logged once instead of on every reload check; 0 when the last load was
+    // good. A failed reload keeps the fields above and never falls back.
+    int lastLoadError;
     // Live conf reload: the state file is stat()ed at most every
     // kReloadCheckFrames frames, and re-parsed only when its mtime changes, so
     // a UI toggle applies without restarting the audio stack. No extra thread.
@@ -465,8 +470,19 @@ static void DiracBiquad_ReloadConfig(dirac_biquad_object_t *context) {
     if (!context->configured) {
         return;
     }
-    DiracBiquadConfig::Load(context->gainsHalfDb, &context->diracEnabled, &context->fallback,
-                            &context->volumeDb);
+
+    int error = 0;
+    if (DiracBiquadConfig::Load(context->gainsHalfDb, &context->diracEnabled, &context->fallback,
+                                &context->volumeDb, &error)) {
+        context->lastLoadError = 0;
+    } else if (error != context->lastLoadError) {
+        // Keep the last good state: an unreadable or torn file must never
+        // silently convert the effect to a full pass-through. Log each distinct
+        // failure once, so an EACCES is visible without flooding logcat.
+        context->lastLoadError = error;
+        ALOGW("%s: state file %s unusable (%s); keeping last good state", __func__,
+              DiracBiquadConfig::ConfigPath(), strerror(error));
+    }
 
     const audio_format_t format =
             static_cast<audio_format_t>(context->config.inputCfg.format);
@@ -491,6 +507,7 @@ static int DiracBiquad_Init(dirac_biquad_module_t *module) {
     module->context.enabled = false;
     module->context.fallback = false;
     module->context.device = AUDIO_DEVICE_NONE;
+    module->context.lastLoadError = 0;
     DiracBiquadConfig::Fallback(module->context.gainsHalfDb, &module->context.diracEnabled,
                               &module->context.fallback, &module->context.volumeDb);
 
@@ -514,19 +531,8 @@ static int DiracBiquad_Configure(dirac_biquad_module_t *module, const effect_con
     context->configured = true;
     context->state = DIRAC_BIQUAD_STATE_INITIALIZED;
 
-    const audio_format_t format = static_cast<audio_format_t>(config->inputCfg.format);
-    const unsigned channelCount =
-            static_cast<unsigned>(audio_channel_count_from_out_mask(config->inputCfg.channels));
-
     // Reload the QEM parity state on every configure.
-    DiracBiquadConfig::Load(context->gainsHalfDb, &context->diracEnabled, &context->fallback,
-                            &context->volumeDb);
-
-    context->filterReady =
-            (format == AUDIO_FORMAT_PCM_FLOAT || format == AUDIO_FORMAT_PCM_16_BIT) &&
-            context->filter.Configure(config->inputCfg.samplingRate, channelCount,
-                                       context->gainsHalfDb);
-    context->filter.SetAttenuationDb(context->volumeDb);
+    DiracBiquad_ReloadConfig(context);
 
     return 0;
 }

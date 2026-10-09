@@ -39,10 +39,12 @@ class DiracStateReceiver : BroadcastReceiver() {
             }
             ACTION_A2DP_CONNECTION_STATE_CHANGED -> {
                 val state = intent.getIntExtra(EXTRA_A2DP_STATE, BluetoothProfile.STATE_DISCONNECTED)
-                DiracQemEffect.setBluetooth(context, state == BluetoothProfile.STATE_CONNECTED)
+                DiracState.setBluetooth(context, state == BluetoothProfile.STATE_CONNECTED)
+                DiracQemEffect.setBluetooth(context)
             }
             ACTION_MOVIES_STATE_CHANGED -> {
-                DiracQemEffect.setMovie(context, intent.getBooleanExtra(EXTRA_MOVIES_STATE, false))
+                DiracState.setMovie(context, intent.getBooleanExtra(EXTRA_MOVIES_STATE, false))
+                DiracQemEffect.setMovie(context)
             }
         }
     }
