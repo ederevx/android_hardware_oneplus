@@ -23,6 +23,7 @@
 #include "DiracBiquadTable.h"
 #include "LoudnessTilt.h"
 #include "LowBandMono.h"
+#include "SoftClip.h"
 #include "StereoWidth.h"
 
 namespace {
@@ -210,7 +211,7 @@ void DiracBiquadFilter::Process(const void *input, void *output, size_t frameCou
                     if (accumulate) {
                         y += out[base + ch];
                     }
-                    out[base + ch] = std::fmin(1.0f, std::fmax(-1.0f, y));
+                    out[base + ch] = clip_.ProcessSample(y);
                 }
             }
             break;
@@ -230,7 +231,7 @@ void DiracBiquadFilter::Process(const void *input, void *output, size_t frameCou
                     if (accumulate) {
                         y += static_cast<float>(out[base + ch]) / 32768.0f;
                     }
-                    y = std::fmin(1.0f, std::fmax(-1.0f, y));
+                    y = clip_.ProcessSample(y);
                     out[base + ch] = static_cast<int16_t>(std::lround(y * 32767.0f));
                 }
             }
