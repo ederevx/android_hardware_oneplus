@@ -23,6 +23,7 @@
 #include "Biquad.h"
 #include "DiracBiquadTable.h"
 #include "LoudnessTilt.h"
+#include "SoftClip.h"
 #include "StereoWidth.h"
 
 // Host-side biquad curve with Dirac-QEM parity.
@@ -48,6 +49,13 @@
 // zeroed), the HDSOUND filter index (its data lives in diracvdd.bin), and the
 // pslimiter/safelimiter/timedomainlimiter chain. The preamp below is a static
 // headroom stand-in for those limiters, not a limiter.
+//
+// One stage stands in for what this leg cannot have: the clamp became SoftClip,
+// the safelimiter's stand-in, so the cascade's overshoot can no longer modulate
+// the whole band. The module's own input and output rumble filters ("Input HP
+// fchz" / "Output HP fchz", named in libdirac-capiv2.so) are zeroed in this cal
+// set, so this leg adds no high-pass either: a corner would be an invention,
+// and faithfulness here means doing what the OEM's own calibration does.
 //
 // Before the user EQ the chain applies a fixed approximation of one Dirac
 // signature: the FIR response of the hdsound slot 8 filter
@@ -121,6 +129,7 @@ class DiracBiquadFilter {
     Biquad signature_[kMaxChannels][kSignatureCount];
     LoudnessTilt tilt_;
     StereoWidth width_;
+    SoftClip clip_;
     float preampGain_ = 1.0f;
     unsigned channelCount_ = 0;
     bool configured_ = false;
