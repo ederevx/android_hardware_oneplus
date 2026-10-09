@@ -11,5 +11,5 @@
     <string name="dirac_sumdiff_title">Stereo width</string>
     <string name="dirac_sumdiff_reset">Reset stereo width</string>
     <string name="dirac_sumdiff_value">%1$d%%</string>
-    <string name="dirac_sumdiff_na">N/A</string>
+    <string name="dirac_sumdiff_dsp_managed">Managed by DSP</string>
 </resources>

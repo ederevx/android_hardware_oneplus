@@ -34,7 +34,7 @@ import kotlin.math.roundToInt
  *
  * On an output the DSP voices the row is inert: the host stage the bar drives
  * never runs there, so the bar and its reset are greyed and the magnitude slot
- * reads N/A instead of the stored width.
+ * reads "Managed by DSP" instead of the stored width.
  */
 class SumDiffPreference @JvmOverloads constructor(
     context: Context,
@@ -84,7 +84,7 @@ class SumDiffPreference @JvmOverloads constructor(
 
     private fun showValue(value: Float) {
         valueLabel?.text = if (dspHandled) {
-            context.getString(R.string.dirac_sumdiff_na)
+            context.getString(R.string.dirac_sumdiff_dsp_managed)
         } else {
             context.getString(R.string.dirac_sumdiff_value, (value * 100f).roundToInt())
         }

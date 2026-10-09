@@ -3,15 +3,15 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:paddingTop="24dp"
-    android:paddingBottom="8dp">
+    android:paddingTop="12dp"
+    android:paddingBottom="12dp">
 
     <TextView
         android:id="@+id/dirac_sumdiff_value"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:gravity="center"
-        android:paddingBottom="2dp"
+        android:paddingBottom="6dp"
         android:textSize="12sp" />
 
     <org.lineageos.dirac.qem.HorizontalSlider
@@ -19,9 +19,13 @@
         android:layout_width="match_parent"
         android:layout_height="40dp" />
 
+    <!-- The title row is exactly as tall as the reset button, so the title sits
+         the same distance below the bar as the magnitude sits above it: the
+         value's bottom padding and the title's share of this row are both 6dp
+         past the slider's own half-height. -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="28dp"
         android:orientation="horizontal"
         android:gravity="center_vertical">
 
@@ -42,7 +46,7 @@
         <ImageButton
             android:id="@+id/dirac_sumdiff_reset"
             android:layout_width="40dp"
-            android:layout_height="40dp"
+            android:layout_height="28dp"
             android:background="?android:attr/selectableItemBackgroundBorderless"
             android:contentDescription="@string/dirac_sumdiff_reset"
             android:scaleType="centerInside"

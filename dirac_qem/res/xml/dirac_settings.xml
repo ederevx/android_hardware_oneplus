@@ -42,6 +42,12 @@
             android:key="dirac_eq_board" />
     </PreferenceCategory>
 
+    <!-- A group divider, so the expressive adapter closes the equalizer card
+         here and the width row renders as its own card instead of as the last
+         row of the equalizer card. -->
+    <com.android.settingslib.widget.SpacePreference
+        android:layout_height="16dp" />
+
     <!-- Drives the ADSP panorama2 Sum/Diff balance on every supported route
          (speaker, wired headset) and the host StereoWidth state where the
          fallback runs; it needs neither the fallback build flag nor the
