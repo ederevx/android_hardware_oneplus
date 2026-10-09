@@ -16,7 +16,6 @@
 
 package org.lineageos.dirac.qem
 
-import android.bluetooth.BluetoothProfile
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -32,15 +31,12 @@ import android.content.IntentFilter
 class DiracStateReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
-            Intent.ACTION_HEADSET_PLUG -> {
-                // The route is resolved from the jack's own state, so a plug or
-                // unplug only has to re-run the push.
+            Intent.ACTION_HEADSET_PLUG, ACTION_A2DP_CONNECTION_STATE_CHANGED -> {
+                // Both are only a trigger: the pass re-reads the live output
+                // from the platform, so neither carries the state itself and a
+                // connection that happened while this process was down is read
+                // on the next one rather than guessed from an extra.
                 DiracQemEffect.apply(context)
-            }
-            ACTION_A2DP_CONNECTION_STATE_CHANGED -> {
-                val state = intent.getIntExtra(EXTRA_A2DP_STATE, BluetoothProfile.STATE_DISCONNECTED)
-                DiracState.setBluetooth(context, state == BluetoothProfile.STATE_CONNECTED)
-                DiracQemEffect.setBluetooth(context)
             }
             ACTION_MOVIES_STATE_CHANGED -> {
                 DiracState.setMovie(context, intent.getBooleanExtra(EXTRA_MOVIES_STATE, false))
@@ -58,7 +54,6 @@ class DiracStateReceiver : BroadcastReceiver() {
 
         const val ACTION_A2DP_CONNECTION_STATE_CHANGED =
             "android.bluetooth.a2dp.profile.action.CONNECTION_STATE_CHANGED"
-        const val EXTRA_A2DP_STATE = "android.bluetooth.profile.extra.STATE"
         const val ACTION_MOVIES_STATE_CHANGED =
             "com.oem.intent.action.ACTION_MOVIES_STATE_CHANGED_ACTION"
         const val EXTRA_MOVIES_STATE = "com.oem.intent.action.MOVIES_STATE"

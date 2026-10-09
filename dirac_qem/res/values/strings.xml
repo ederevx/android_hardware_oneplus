@@ -10,4 +10,6 @@
     <string name="dirac_biquad_fallback_summary">Lets Bluetooth and other non-DSP audio routes receive a Dirac effect approximation; it does not replace or override the built-in tuning.</string>
     <string name="dirac_sumdiff_title">Stereo width</string>
     <string name="dirac_sumdiff_reset">Reset stereo width</string>
+    <string name="dirac_sumdiff_value">%1$d%%</string>
+    <string name="dirac_sumdiff_dsp_managed">Managed by DSP</string>
 </resources>

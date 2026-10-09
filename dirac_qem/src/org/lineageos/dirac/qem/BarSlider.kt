@@ -283,6 +283,10 @@ abstract class BarSlider @JvmOverloads constructor(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        // A disabled bar is inert: no halo, no drag, no settle, no HAL write.
+        if (!isEnabled) {
+            return false
+        }
         gestureDetector.onTouchEvent(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
