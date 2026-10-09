@@ -65,8 +65,8 @@ class SumDiffPreference @JvmOverloads constructor(
 
     /**
      * Re-reads whether the DSP owns the widening and repaints the row. A rebind,
-     * a jack change and an A2DP change all land here; caching the answer keeps
-     * the per-frame relabel from resolving the route again.
+     * a route change and a Bluetooth connection alike land here; caching the
+     * answer keeps the per-frame relabel from resolving the route again.
      */
     fun refresh() {
         dspHandled = DiracState.isWideningDspHandled(context)

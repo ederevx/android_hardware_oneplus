@@ -23,7 +23,7 @@
 
 namespace dirac {
 
-// The one owner of the A2DP fallback config file. It writes the file the
+// The one owner of the host-output fallback config file. It writes the file the
 // host-side effect reads, in the format DiracBiquadConfig::Load parses.
 class DiracBiquadConf {
   public:
