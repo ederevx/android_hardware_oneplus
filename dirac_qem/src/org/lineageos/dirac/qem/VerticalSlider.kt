@@ -120,19 +120,19 @@ class VerticalSlider @JvmOverloads constructor(
         invalidate()
     }
 
-    /** The key this slider drives, in half-dB steps, from the engine's array. */
+    /** The key this slider drives, in half-dB steps, from the owned band array. */
     private fun currentValue(): Int =
-        DiracQemEffect.currentBands(context).getOrElse(bandIndex) { 0 }
+        DiracState.currentBands(context).getOrElse(bandIndex) { 0 }
 
     /**
-     * Stages the value in the engine's array and restarts the settle window.
-     * The engine's array is the only thing that moves while the finger is down:
-     * the curve redraws from it on the next frame, and the HAL is not touched
-     * until the position settles.
+     * Stages the value in the owned band array and restarts the settle window.
+     * That array is the only thing that moves while the finger is down: the
+     * curve redraws from it on the next frame, and the HAL is not touched until
+     * the position settles.
      */
     private fun updateValue(newValue: Float) {
         val value = newValue.roundToInt().coerceIn(minValue, maxValue)
-        if (!DiracQemEffect.setBand(context, bandIndex, value)) {
+        if (!DiracState.setBand(context, bandIndex, value)) {
             return
         }
         dirty = true
@@ -162,8 +162,8 @@ class VerticalSlider @JvmOverloads constructor(
 
     /**
      * The settle: flush the last frame so the row shows the settled value, then
-     * write the tune once and hand the one push of the gesture to the engine's
-     * executor, off the UI thread. Called by the idle window, by touch-up or
+     * write the tune once and hand the one push of the gesture to the HAL
+     * engine's executor, off the UI thread. Called by the idle window, by touch-up or
      * cancel, and on detach.
      */
     private fun settleNow() {
@@ -173,7 +173,7 @@ class VerticalSlider @JvmOverloads constructor(
             return
         }
         dirty = false
-        DiracQemEffect.persistBands(context)
+        DiracState.persistBands(context)
         DiracQemEffect.pushBands(context)
     }
 
@@ -317,7 +317,7 @@ class VerticalSlider @JvmOverloads constructor(
         removeCallbacks(settle)
         if (dirty) {
             dirty = false
-            DiracQemEffect.persistBands(context)
+            DiracState.persistBands(context)
             DiracQemEffect.pushBands(context)
         }
         super.onDetachedFromWindow()
