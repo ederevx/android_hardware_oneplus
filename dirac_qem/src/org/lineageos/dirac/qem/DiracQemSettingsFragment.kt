@@ -21,6 +21,7 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Bundle
 import androidx.preference.ListPreference
+import androidx.preference.Preference
 import androidx.preference.SwitchPreferenceCompat
 import com.android.settingslib.widget.MainSwitchPreference
 import com.android.settingslib.widget.SettingsBasePreferenceFragment
@@ -34,6 +35,15 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
 
     private var previewPreference: EqPreviewPreference? = null
     private var stylePreference: ListPreference? = null
+    private var modelPreference: ListPreference? = null
+
+    /**
+     * Re-evaluates the headset-model row when the route changes while the page
+     * is open. The post drops the update when the view is gone.
+     */
+    private val routeListener: () -> Unit = {
+        view?.post { if (isAdded) refreshModelPreference() }
+    }
 
     /**
      * Re-reconciles the route while the page is open. A plug or unplug changes
@@ -54,9 +64,11 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
         super.onStart()
         requireContext().getSystemService(AudioManager::class.java)
             ?.registerAudioDeviceCallback(routeCallback, null)
+        DiracState.addRouteListener(routeListener)
     }
 
     override fun onStop() {
+        DiracState.removeRouteListener(routeListener)
         context?.getSystemService(AudioManager::class.java)
             ?.unregisterAudioDeviceCallback(routeCallback)
         super.onStop()
@@ -92,14 +104,22 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
             }
         }
 
-        findPreference<ListPreference>(KEY_MODEL)?.let { preference ->
+        modelPreference = findPreference<ListPreference>(KEY_MODEL)?.also { preference ->
             preference.value = DiracState.model(context).toString()
+            // Live text: the provider is consulted on every bind, and both the
+            // enable flip and a value change notify, so no manual rebind is
+            // needed. It also means setSummary must never be called on this row.
+            preference.summaryProvider =
+                Preference.SummaryProvider<ListPreference> { row ->
+                    if (row.isEnabled) row.entry else row.entries.firstOrNull()
+                }
             preference.setOnPreferenceChangeListener { _, value ->
                 DiracState.setModel(context, (value as String).toInt())
                 DiracQemEffect.apply(context)
                 true
             }
         }
+        refreshModelPreference()
 
         stylePreference = findPreference<ListPreference>(KEY_STYLE)?.also { preference ->
             preference.value = DiracState.style(context).toString()
@@ -146,6 +166,24 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
     private fun refreshBands() {
         findPreference<EqBoardPreference>(KEY_EQ_BOARD)?.refresh()
         previewPreference?.refresh()
+    }
+
+    /**
+     * The headset-model row is selectable only while the app's own route is the
+     * external one -- the same condition under which the effect pushes
+     * PARAM_HDSOUND_ENABLE and PARAM_HDSOUND_FILTERIDX. On speaker, Bluetooth
+     * and every other route it is greyed out, and its summary then shows the
+     * first entry, "General Enhancement", without touching the stored model.
+     */
+    private fun refreshModelPreference() {
+        // The summary follows the row's own state through its provider, so only
+        // the enable flip is driven here; setEnabled notifies on its own.
+        modelPreference?.isEnabled = isExternalRoute()
+    }
+
+    private fun isExternalRoute(): Boolean {
+        val context = context ?: return false
+        return DiracState.output(context) == DiracState.OUTPUT_EXTERNAL
     }
 
     private companion object {
