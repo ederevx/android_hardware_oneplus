@@ -192,12 +192,12 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
     private fun refreshModelPreference() {
         // The summary follows the row's own state through its provider, so only
         // the enable flip is driven here; setEnabled notifies on its own.
-        modelPreference?.isEnabled = isExternalRoute()
+        modelPreference?.isEnabled = isWiredSink()
     }
 
-    private fun isExternalRoute(): Boolean {
+    private fun isWiredSink(): Boolean {
         val context = context ?: return false
-        return DiracState.output(context) == DiracState.OUTPUT_EXTERNAL
+        return DiracState.isWiredSink(context)
     }
 
     private companion object {

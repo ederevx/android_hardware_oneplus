@@ -143,12 +143,6 @@ object DiracQemEffect {
             QemProtocol.floatPayload(DiracState.sumDiff(context)), QemProtocol.CALTYPE_RAW)
     }
 
-    /** Pushes the stored Bluetooth-connected loudness scalar from the owned state. */
-    fun setBluetooth(context: Context) {
-        send(context, SCALAR_LOUDNESS, QemProtocol.scalarPayload(
-            SCALAR_LOUDNESS, if (DiracState.isBluetoothConnected(context)) BT_LOUDNESS else DEFAULT_LOUDNESS))
-    }
-
     private fun send(context: Context, key: Int, payload: ByteArray) {
         val output = DiracState.output(context)
         QemTransport(context).send(
@@ -170,8 +164,10 @@ object DiracQemEffect {
         // The single load step: the stored values are read before anything is
         // composed or published.
         DiracState.load(context)
-        // A pass is where the route is re-read; the band path then reuses it.
-        val route = DiracState.resolveRoute(context, true)
+        // A pass is where the live sink is re-read and a page that is open is
+        // told it changed; the frames below then reuse the route it resolves.
+        DiracState.refreshRoute(context)
+        val route = DiracState.output(context)
         DiracState.publish(context)
         val applied = DiracState.appliedRoutes(context)
         if (!DiracState.isEnabled(context)) {
@@ -211,6 +207,13 @@ object DiracQemEffect {
         sendOp(context, output, QemProtocol.PARAM_EQ_BANDS, QemProtocol.eqBandsPayload(bands))
         sendOp(context, output, QemProtocol.PARAM_SFX_ENABLE, QemProtocol.intPayload(1))
         sendSumDiff(context, output)
+        // The loudness scalar is derived from the live sink, so it rides the
+        // pass instead of an A2DP broadcast of its own: the value the DSP holds
+        // then always matches the sink, including the return to the default
+        // loudness when Bluetooth goes away.
+        sendOp(context, output, QemProtocol.PARAM_SCALAR_BASE + SCALAR_LOUDNESS,
+            QemProtocol.scalarPayload(SCALAR_LOUDNESS,
+                if (DiracState.isBluetoothConnected(context)) BT_LOUDNESS else DEFAULT_LOUDNESS))
         if (output == DiracState.OUTPUT_EXTERNAL) {
             sendOp(context, output, QemProtocol.PARAM_HDSOUND_ENABLE, QemProtocol.intPayload(1))
             sendOp(context, output, QemProtocol.PARAM_HDSOUND_FILTERIDX,

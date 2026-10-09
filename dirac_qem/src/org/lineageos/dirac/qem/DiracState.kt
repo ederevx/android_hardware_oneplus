@@ -39,11 +39,14 @@ import kotlin.math.roundToInt
  * before it, so a default-valued snapshot can never reach the daemon.
  */
 object DiracState {
+    /**
+     * The two routes the ADSP frame family addresses: the internal module the
+     * speaker route uses and the external one the wired jack uses. They are not
+     * the live output -- [sink] is -- because every sink that is not the wired
+     * jack, A2DP included, addresses the internal module.
+     */
     const val OUTPUT_INTERNAL = 0
     const val OUTPUT_EXTERNAL = 1
-
-    /** Sentinel for a route that has not been resolved since process start. */
-    const val NO_ROUTE = Int.MIN_VALUE
 
     /** No usable stream volume; the effect leaves the loudness tilt at identity. */
     const val UNKNOWN_VOLUME_DB = -1.0
@@ -80,12 +83,17 @@ object DiracState {
     private var style = DiracPresets.STYLE_NONE
     private var model = 0
     private var movie = false
-    private var bluetoothConnected = false
     private var appliedRoutes = 0
-    private var route = NO_ROUTE
     private var attenuationDb = UNKNOWN_VOLUME_DB
 
-    /** In-process observers of [route]; notified only when it changes. */
+    /**
+     * The sink the observers were last told about. The sink itself is never
+     * remembered: [sink] reads it live, and this only decides when a change is
+     * worth a notification.
+     */
+    private var notifiedSink: DiracRouteResolver.Sink? = null
+
+    /** In-process observers of [sink]; notified only when it changes. */
     private val routeListeners = CopyOnWriteArraySet<() -> Unit>()
 
     /**
@@ -254,37 +262,23 @@ object DiracState {
         prefs(context).edit().putBoolean(KEY_MOVIE, value).apply()
     }
 
-    fun isBluetoothConnected(context: Context): Boolean {
-        ensureLoaded(context)
-        return bluetoothConnected
-    }
-
-    fun setBluetooth(context: Context, value: Boolean) {
-        ensureLoaded(context)
-        if (bluetoothConnected == value) {
-            return
-        }
-        bluetoothConnected = value
-        // An A2DP connection moves the output between the DSP and the host
-        // fallback, so a live page has to re-read it like a jack change.
-        routeListeners.forEach { it() }
-    }
-
     /**
-     * Whether the current output is one the Dirac DSP voices, so the host
-     * StereoWidth stage never runs there: the biquad effect gates itself off for
-     * speaker, wired headset, wired headphone and line, and the widening on
-     * those routes is the DSP's. The remaining outputs -- A2DP and the other
-     * non-DSP routes -- are where the host effect owns it instead.
-     *
-     * The app cannot read the effect's own device, so this composes the two
-     * signals it owns: a plugged jack is the external DSP output, and an A2DP
-     * connection is the non-DSP one; with neither, the output is the speaker.
+     * The live output the user hears, resolved from the platform on every read,
+     * so a page opened while a route is already live sees it and a connection
+     * this process was not running for is never missed.
      */
-    fun isWideningDspHandled(context: Context): Boolean {
-        ensureLoaded(context)
-        return output(context) == OUTPUT_EXTERNAL || !bluetoothConnected
-    }
+    fun sink(context: Context): DiracRouteResolver.Sink = DiracRouteResolver.sink(context)
+
+    /** Whether the DSP voices the widening on the live sink. */
+    fun isWideningDspHandled(context: Context): Boolean = sink(context).dspVoicesWidening
+
+    /** Whether the live sink is the Bluetooth one, which has its own loudness. */
+    fun isBluetoothConnected(context: Context): Boolean =
+        sink(context) == DiracRouteResolver.Sink.BLUETOOTH
+
+    /** Whether the wired jack is the live sink, the one the headset model drives. */
+    fun isWiredSink(context: Context): Boolean =
+        sink(context) == DiracRouteResolver.Sink.WIRED
 
     fun appliedRoutes(context: Context): Int {
         ensureLoaded(context)
@@ -318,8 +312,9 @@ object DiracState {
         return publish(context)
     }
 
-    /** The live route, resolved from the jack's own connection signal. */
-    fun output(context: Context): Int = resolveRoute(context, false)
+    /** The ADSP route the live sink addresses. */
+    fun output(context: Context): Int =
+        if (isWiredSink(context)) OUTPUT_EXTERNAL else OUTPUT_INTERNAL
 
     /**
      * Registers an in-process observer that is called whenever the resolved
@@ -335,17 +330,20 @@ object DiracState {
         routeListeners.remove(listener)
     }
 
-    fun resolveRoute(context: Context, force: Boolean): Int {
-        if (force || route == NO_ROUTE) {
-            val resolved = DiracRouteResolver.resolve(context)
-            if (resolved != route) {
-                route = resolved
-                // A listener that reads the route sees the new value and does
-                // not re-resolve, so this cannot recurse.
-                routeListeners.forEach { it() }
-            }
+    /**
+     * Re-reads the live sink and tells the observers when it changed, so a page
+     * that is already open follows a jack plug or an A2DP connection. It is
+     * called on every pass, so nothing has to remember what the route was.
+     */
+    fun refreshRoute(context: Context) {
+        val live = sink(context)
+        if (live == notifiedSink) {
+            return
         }
-        return route
+        notifiedSink = live
+        // A listener that reads the sink sees the new value already, so this
+        // cannot recurse.
+        routeListeners.forEach { it() }
     }
 
     /** The seven band gains in effect, as the one shared array instance. */
