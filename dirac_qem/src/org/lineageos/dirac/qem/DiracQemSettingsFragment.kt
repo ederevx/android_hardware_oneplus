@@ -88,17 +88,17 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
             }
         }
 
-        // The A2DP fallback row exists only when the build ships the
+        // The host-output fallback row exists only when the build ships the
         // dirac_biquad effect. Absent that, the row is removed: no dead
         // preference, no listener, and nothing that would ever be pushed.
-        val fallback = findPreference<SwitchPreferenceCompat>(KEY_A2DP_FALLBACK)
+        val fallback = findPreference<SwitchPreferenceCompat>(KEY_BIQUAD_FALLBACK)
         if (fallback != null) {
-            if (!DiracState.isA2dpFallbackAvailable(context)) {
+            if (!DiracState.isBiquadFallbackAvailable(context)) {
                 preferenceScreen.removePreference(fallback)
             } else {
-                fallback.isChecked = DiracState.isA2dpFallbackEnabled(context)
+                fallback.isChecked = DiracState.isBiquadFallbackEnabled(context)
                 fallback.setOnPreferenceChangeListener { _, value ->
-                    DiracState.setA2dpFallback(context, value as Boolean)
+                    DiracState.setBiquadFallback(context, value as Boolean)
                     DiracQemEffect.apply(context)
                     true
                 }
@@ -202,7 +202,7 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
 
     private companion object {
         const val KEY_ENABLED = "dirac_enable"
-        const val KEY_A2DP_FALLBACK = "dirac_biquad_fallback"
+        const val KEY_BIQUAD_FALLBACK = "dirac_biquad_fallback"
         const val KEY_MODEL = "dirac_model"
         const val KEY_STYLE = "dirac_style"
         const val KEY_EQ_PREVIEW = "dirac_eq_preview"

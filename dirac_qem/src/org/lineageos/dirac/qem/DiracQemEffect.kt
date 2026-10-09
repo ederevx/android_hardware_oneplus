@@ -167,7 +167,7 @@ object DiracQemEffect {
      * enable path actually turned on, which is not necessarily the current one
      * (the headset can be unplugged between the two passes).
      *
-     * The A2DP host effect's state is published first, on every pass, and is a
+     * The host effect's state is published first, on every pass, and is a
      * no-op when nothing changed.
      */
     fun apply(context: Context) {
@@ -224,7 +224,7 @@ object DiracQemEffect {
         sendOp(context, output, QemProtocol.PARAM_SFX_ENABLE, QemProtocol.intPayload(1))
         sendSumDiff(context, output)
         // The loudness scalar is derived from the live sink, so it rides the
-        // pass instead of an A2DP broadcast of its own: the value the DSP holds
+        // pass instead of a route broadcast of its own: the value the DSP holds
         // then always matches the sink, including the return to the default
         // loudness when Bluetooth goes away.
         sendOp(context, output, QemProtocol.PARAM_SCALAR_BASE + SCALAR_LOUDNESS,

@@ -32,7 +32,7 @@
 // read failure keeps the last good state rather than bypassing the effect; see
 // DiracBiquadConfig. Parity covers the seven user-EQ gains and the enable flag
 // only: the DAR device correction, the HDSOUND filter index and the limiter
-// chain are not reproduced, so A2DP cannot sound identical to the wired route.
+// chain are not reproduced, so a host output cannot sound identical to the wired route.
 //
 // Effect order: AudioFlinger applies the stream volume per track in
 // prepareTracks_l (mMasterVolume * track port volume) and runs the output
@@ -359,7 +359,7 @@ static int32_t DiracBiquad_Command(effect_handle_t self,
             }
             context->device = static_cast<audio_devices_t>(*reinterpret_cast<uint32_t *>(pCmdData));
             ALOGV("%s: device %#x", __func__, context->device);
-            // Re-read the QEM parity state on every device change so an A2DP
+            // Re-read the QEM parity state on every device change so a host
             // transition picks up the current app setting.
             DiracBiquad_ReloadConfig(context);
             break;
