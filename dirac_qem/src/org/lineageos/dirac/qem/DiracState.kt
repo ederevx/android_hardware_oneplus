@@ -19,6 +19,7 @@ package org.lineageos.dirac.qem
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
+import java.util.concurrent.CopyOnWriteArraySet
 
 /**
  * The one owner of the Dirac app state.
@@ -72,6 +73,9 @@ object DiracState {
     private var appliedRoutes = 0
     private var route = NO_ROUTE
     private var attenuationDb = UNKNOWN_VOLUME_DB
+
+    /** In-process observers of [route]; notified only when it changes. */
+    private val routeListeners = CopyOnWriteArraySet<() -> Unit>()
 
     /**
      * The one band-state array. It is loaded once from storage, or rebuilt when
@@ -252,9 +256,28 @@ object DiracState {
     /** The live route, resolved from the jack's own connection signal. */
     fun output(context: Context): Int = resolveRoute(context, false)
 
+    /**
+     * Registers an in-process observer that is called whenever the resolved
+     * route changes. It exists so a live settings page can follow a plug
+     * without owning a second HEADSET_PLUG registration.
+     */
+    fun addRouteListener(listener: () -> Unit) {
+        routeListeners.add(listener)
+    }
+
+    fun removeRouteListener(listener: () -> Unit) {
+        routeListeners.remove(listener)
+    }
+
     fun resolveRoute(context: Context, force: Boolean): Int {
         if (force || route == NO_ROUTE) {
-            route = DiracRouteResolver.resolve(context)
+            val resolved = DiracRouteResolver.resolve(context)
+            if (resolved != route) {
+                route = resolved
+                // A listener that reads the route sees the new value and does
+                // not re-resolve, so this cannot recurse.
+                routeListeners.forEach { it() }
+            }
         }
         return route
     }
