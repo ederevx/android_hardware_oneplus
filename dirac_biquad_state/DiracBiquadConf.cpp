@@ -71,7 +71,7 @@ std::string Format(const DiracBiquadConf::State &state) {
     char sumdiff[32];
     snprintf(sumdiff, sizeof(sumdiff), "%.3f", state.sumdiff);
 
-    std::string body = "# dirac a2dp state: enabled/fallback/sumdiff, seven half-dB band gains"
+    std::string body = "# dirac host biquad state: enabled/fallback/sumdiff, seven half-dB band gains"
                         ", stream attenuation\n";
     body += "enabled=" + std::string(state.enabled ? "1" : "0") + "\n";
     body += "fallback=" + std::string(state.fallback ? "1" : "0") + "\n";
