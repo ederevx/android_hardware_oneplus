@@ -36,12 +36,28 @@ object QemProtocol {
     val PERSIST = intArrayOf(0, 1)
 
     const val PARAM_ENABLE = 0x12D01
+    const val PARAM_SUMDIFF = 0x12D02
     const val PARAM_HDSOUND_ENABLE = 0x12D03
     const val PARAM_HDSOUND_FILTERIDX = 0x12D04
     const val PARAM_EQ_ENABLE = 0x12D35
     const val PARAM_EQ_BANDS = 0x12D36
     const val PARAM_SFX_ENABLE = 0x12D67
     const val PARAM_SCALAR_BASE = 0x14000
+
+    /**
+     * The ADSP panorama2 Sum/Diff balance is a continuous 0.0..1.0 mid/side
+     * width, read as weights (1-v, 1+v); 0.0 is bypass.
+     */
+    const val SUMDIFF_OFF = 0.0f
+
+    /**
+     * The calibration type the HAL hands to the ACDB loader. An ACDB frame is
+     * validated against the module's parameter LUT before it is sent; a raw
+     * frame bypasses that lookup. The Sum/Diff param has no LUT entry, so it is
+     * the one frame sent raw.
+     */
+    const val CALTYPE_ACDB = 0
+    const val CALTYPE_RAW = 1
 
     /**
      * A calibration frame is a 12-byte little-endian header followed by the
@@ -56,6 +72,9 @@ object QemProtocol {
 
     fun intPayload(value: Int): ByteArray =
         ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(value).array()
+
+    fun floatPayload(value: Float): ByteArray =
+        ByteBuffer.allocate(FLOAT_SIZE).order(ByteOrder.LITTLE_ENDIAN).putFloat(value).array()
 
     /**
      * The 0x12D36 band payload is seven little-endian 32-bit floats in dB.
@@ -92,13 +111,14 @@ object QemProtocol {
         sndDevId: Int,
         sampleRate: Int,
         data: ByteArray,
+        calType: Int = CALTYPE_ACDB,
     ): String {
         val selectors = if (sndDevId > 0) {
             "cal_devid=0;cal_snddevid=$sndDevId"
         } else {
             "cal_devid=$device"
         }
-        return "cal_caltype=0;cal_topoid=$topo;cal_apptype=$appType;cal_persist=$persist;" +
+        return "cal_caltype=$calType;cal_topoid=$topo;cal_apptype=$appType;cal_persist=$persist;" +
             "$selectors;cal_samplerate=$sampleRate;cal_data=${encode(data)}"
     }
 

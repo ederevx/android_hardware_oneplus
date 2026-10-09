@@ -20,13 +20,15 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
 import java.util.concurrent.CopyOnWriteArraySet
+import kotlin.math.roundToInt
 
 /**
  * The one owner of the Dirac app state.
  *
  * Every published variable -- the enable flag, the A2DP fallback opt-in, the
- * seven band gains, the stream attenuation, the resolved route and the HDSOUND
- * filter index -- lives here and is read and written only through this class.
+ * Sum/Diff width, the seven band gains, the stream attenuation, the resolved
+ * route and the HDSOUND filter index -- lives here and is read and written only
+ * through this class.
  * It keeps the authoritative snapshot and the last payload handed to the
  * daemon, so [publish] is a no-op while the state is unchanged and opening the
  * settings app cannot rewrite an identical config. [assertState] reads the
@@ -37,11 +39,14 @@ import java.util.concurrent.CopyOnWriteArraySet
  * before it, so a default-valued snapshot can never reach the daemon.
  */
 object DiracState {
+    /**
+     * The two routes the ADSP frame family addresses: the internal module the
+     * speaker route uses and the external one the wired jack uses. They are not
+     * the live output -- [sink] is -- because every sink that is not the wired
+     * jack, A2DP included, addresses the internal module.
+     */
     const val OUTPUT_INTERNAL = 0
     const val OUTPUT_EXTERNAL = 1
-
-    /** Sentinel for a route that has not been resolved since process start. */
-    const val NO_ROUTE = Int.MIN_VALUE
 
     /** No usable stream volume; the effect leaves the loudness tilt at identity. */
     const val UNKNOWN_VOLUME_DB = -1.0
@@ -57,6 +62,14 @@ object DiracState {
     private const val KEY_MODEL = "model"
     private const val KEY_MOVIE = "movie"
     private const val KEY_A2DP_FALLBACK = "a2dp_fallback"
+    private const val KEY_SUMDIFF = "sumdiff"
+
+    /**
+     * The width a fresh install starts at and the reset target: the middle of
+     * the range, which the slider also draws its detent under. 0.0 stays the
+     * neutral value the effect bypasses and the disable path restores.
+     */
+    const val SUMDIFF_DEFAULT = 0.5f
 
     /** The loudness law is flat past this; it only bounds a mute. */
     private const val MAX_VOLUME_DB = 120.0
@@ -66,15 +79,21 @@ object DiracState {
     private var ready = false
     private var enabled = false
     private var a2dpFallback = false
+    private var sumdiff = 0.0f
     private var style = DiracPresets.STYLE_NONE
     private var model = 0
     private var movie = false
-    private var bluetoothConnected = false
     private var appliedRoutes = 0
-    private var route = NO_ROUTE
     private var attenuationDb = UNKNOWN_VOLUME_DB
 
-    /** In-process observers of [route]; notified only when it changes. */
+    /**
+     * The sink the observers were last told about. The sink itself is never
+     * remembered: [sink] reads it live, and this only decides when a change is
+     * worth a notification.
+     */
+    private var notifiedSink: DiracRouteResolver.Sink? = null
+
+    /** In-process observers of [sink]; notified only when it changes. */
     private val routeListeners = CopyOnWriteArraySet<() -> Unit>()
 
     /**
@@ -96,17 +115,19 @@ object DiracState {
     class Snapshot(
         val enabled: Boolean,
         val a2dpFallback: Boolean,
+        val sumdiff: Float,
         val bandsHalfDb: IntArray,
         val volumeDb: Double,
     ) {
         fun sameAs(other: Snapshot?): Boolean = other != null &&
             enabled == other.enabled &&
             a2dpFallback == other.a2dpFallback &&
+            sumdiff == other.sumdiff &&
             volumeDb == other.volumeDb &&
             bandsHalfDb.contentEquals(other.bandsHalfDb)
 
         override fun toString(): String =
-            "enabled=$enabled fallback=$a2dpFallback volume_db=$volumeDb " +
+            "enabled=$enabled fallback=$a2dpFallback sumdiff=$sumdiff volume_db=$volumeDb " +
                 "bands=${bandsHalfDb.joinToString(";")}"
     }
 
@@ -129,6 +150,7 @@ object DiracState {
         val p = prefs(context)
         enabled = p.getBoolean(KEY_ENABLED, false)
         a2dpFallback = p.getBoolean(KEY_A2DP_FALLBACK, false)
+        sumdiff = p.getFloat(KEY_SUMDIFF, SUMDIFF_DEFAULT)
         style = p.getInt(KEY_STYLE, DiracPresets.STYLE_NONE)
         model = p.getInt(KEY_MODEL, 0)
         movie = p.getBoolean(KEY_MOVIE, false)
@@ -173,6 +195,35 @@ object DiracState {
         prefs(context).edit().putBoolean(KEY_A2DP_FALLBACK, value).apply()
     }
 
+    fun sumDiff(context: Context): Float {
+        ensureLoaded(context)
+        return sumdiff
+    }
+
+    /**
+     * Stages the width in the owned state without persisting or publishing it,
+     * so a drag repaints from it and the HAL is touched only at the settle. The
+     * value is quantized to the thousandth the conf stores, so [assertState]
+     * reads back exactly the float that was published.
+     */
+    fun setSumDiff(context: Context, value: Float): Boolean {
+        ensureLoaded(context)
+        val quantized =
+            (value.coerceIn(0.0f, 1.0f) * SUMDIFF_STEPS).roundToInt() / SUMDIFF_STEPS
+        if (quantized == sumdiff) {
+            return false
+        }
+        sumdiff = quantized
+        return true
+    }
+
+    /** Writes the settled width once and publishes it. */
+    fun persistSumDiff(context: Context) {
+        ensureLoaded(context)
+        prefs(context).edit().putFloat(KEY_SUMDIFF, sumdiff).apply()
+        publish(context)
+    }
+
     fun style(context: Context): Int {
         ensureLoaded(context)
         return style
@@ -211,15 +262,27 @@ object DiracState {
         prefs(context).edit().putBoolean(KEY_MOVIE, value).apply()
     }
 
-    fun isBluetoothConnected(context: Context): Boolean {
-        ensureLoaded(context)
-        return bluetoothConnected
-    }
+    /**
+     * The live output the user hears, resolved from the platform on every read,
+     * so a page opened while a route is already live sees it and a connection
+     * this process was not running for is never missed.
+     */
+    fun sink(context: Context): DiracRouteResolver.Sink = DiracRouteResolver.sink(context)
 
-    fun setBluetooth(context: Context, value: Boolean) {
-        ensureLoaded(context)
-        bluetoothConnected = value
-    }
+    /**
+     * Whether the DSP owns the widening on the live sink. The host stage the
+     * width row drives runs only on the sinks the DSP does not voice, so on a
+     * sink the DSP voices the row has nothing to act on and stays inert.
+     */
+    fun isWideningDspHandled(context: Context): Boolean = sink(context).dspVoiced
+
+    /** Whether the live sink is the Bluetooth one, which has its own loudness. */
+    fun isBluetoothConnected(context: Context): Boolean =
+        sink(context) == DiracRouteResolver.Sink.BLUETOOTH
+
+    /** Whether the wired jack is the live sink, the one the headset model drives. */
+    fun isWiredSink(context: Context): Boolean =
+        sink(context) == DiracRouteResolver.Sink.WIRED
 
     fun appliedRoutes(context: Context): Int {
         ensureLoaded(context)
@@ -253,13 +316,15 @@ object DiracState {
         return publish(context)
     }
 
-    /** The live route, resolved from the jack's own connection signal. */
-    fun output(context: Context): Int = resolveRoute(context, false)
+    /** The ADSP route the live sink addresses. */
+    fun output(context: Context): Int =
+        if (isWiredSink(context)) OUTPUT_EXTERNAL else OUTPUT_INTERNAL
 
     /**
      * Registers an in-process observer that is called whenever the resolved
-     * route changes. It exists so a live settings page can follow a plug
-     * without owning a second HEADSET_PLUG registration.
+     * output route changes, a jack plug and an A2DP connection alike. It exists
+     * so a live settings page can follow the output without owning a second
+     * HEADSET_PLUG or Bluetooth registration.
      */
     fun addRouteListener(listener: () -> Unit) {
         routeListeners.add(listener)
@@ -269,17 +334,20 @@ object DiracState {
         routeListeners.remove(listener)
     }
 
-    fun resolveRoute(context: Context, force: Boolean): Int {
-        if (force || route == NO_ROUTE) {
-            val resolved = DiracRouteResolver.resolve(context)
-            if (resolved != route) {
-                route = resolved
-                // A listener that reads the route sees the new value and does
-                // not re-resolve, so this cannot recurse.
-                routeListeners.forEach { it() }
-            }
+    /**
+     * Re-reads the live sink and tells the observers when it changed, so a page
+     * that is already open follows a jack plug or an A2DP connection. It is
+     * called on every pass, so nothing has to remember what the route was.
+     */
+    fun refreshRoute(context: Context) {
+        val live = sink(context)
+        if (live == notifiedSink) {
+            return
         }
-        return route
+        notifiedSink = live
+        // A listener that reads the sink sees the new value already, so this
+        // cannot recurse.
+        routeListeners.forEach { it() }
     }
 
     /** The seven band gains in effect, as the one shared array instance. */
@@ -364,7 +432,7 @@ object DiracState {
         if (next.sameAs(lastPublished)) {
             return false
         }
-        if (!DiracBiquadState.send(next.enabled, next.a2dpFallback, next.bandsHalfDb, next.volumeDb)) {
+        if (!DiracBiquadState.send(next.enabled, next.a2dpFallback, next.sumdiff, next.bandsHalfDb, next.volumeDb)) {
             return false
         }
         lastPublished = next
@@ -388,7 +456,8 @@ object DiracState {
             Log.w(TAG, "daemon state unavailable; cannot verify [$published]")
             return true
         }
-        val reading = Snapshot(echoed.enabled, echoed.fallback, echoed.bandsHalfDb, echoed.volumeDb)
+        val reading =
+            Snapshot(echoed.enabled, echoed.fallback, echoed.sumDiff, echoed.bandsHalfDb, echoed.volumeDb)
         if (reading.sameAs(published)) {
             return true
         }
@@ -399,10 +468,14 @@ object DiracState {
     private fun compose(context: Context): Snapshot = Snapshot(
         enabled,
         a2dpFallback,
+        sumdiff,
         currentBands(context).copyOf(),
         attenuationDb,
     )
 
     private fun sanitizeVolumeDb(value: Double): Double =
         if (value.isFinite() && value > 0.0) value.coerceAtMost(MAX_VOLUME_DB) else UNKNOWN_VOLUME_DB
+
+    /** The thousand-step grid the conf's %.3f round-trips the width on. */
+    private const val SUMDIFF_STEPS = 1000f
 }

@@ -54,16 +54,19 @@ class DiracBiquadConfig {
     // open or read failure, EINVAL on a parse failure, and 0 on success; it may
     // be null. `fallback` is the software-fallback switch and defaults OFF, so
     // an A2DP stream is voiced only when the user has explicitly extended Dirac
-    // to it. `volumeDb` is the stream attenuation in dB below the reference
+    // to it. `sumdiff` is the mid/side width in 0..1 and also defaults to 0,
+    // i.e. bypass.
+    // `volumeDb` is the stream attenuation in dB below the reference
     // (the app publishes it), or kUnknownVolumeDb.
-    static bool Load(int gainsHalfDb[kBandCount], bool *enabled, bool *fallback,
+    static bool Load(int gainsHalfDb[kBandCount], bool *enabled, bool *fallback, float *sumdiff,
                      double *volumeDb, int *errorCode = nullptr);
 
     // The baked preset used before the state file has ever been loaded. It is
     // the initial default only, never a fallback for a failed reload.
-    // `fallback` is always false and `volumeDb` always unknown here: the switch
-    // is opt-in and the tilt is driven only by a real published volume.
-    static void Fallback(int gainsHalfDb[kBandCount], bool *enabled, bool *fallback,
+    // `fallback` is always false, `sumdiff` always 0 and `volumeDb` always
+    // unknown here: the switches are opt-in and the tilt is driven only by a
+    // real published volume.
+    static void Fallback(int gainsHalfDb[kBandCount], bool *enabled, bool *fallback, float *sumdiff,
                          double *volumeDb);
 
     static const char *ConfigPath();

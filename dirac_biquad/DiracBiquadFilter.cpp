@@ -23,6 +23,7 @@
 #include "DiracBiquadTable.h"
 #include "LoudnessTilt.h"
 #include "LowBandMono.h"
+#include "StereoWidth.h"
 
 namespace {
 
@@ -72,6 +73,10 @@ bool DiracBiquadFilter::Configure(unsigned sampleRateHz, unsigned channelCount,
     // response and cannot raise the per-channel peak.
     mono_.Configure(sampleRateHz, channelCount);
 
+    // The widening is the other half of that topology step: a side gain only,
+    // so it too leaves the per-channel response untouched.
+    width_.Configure(channelCount);
+
     channelCount_ = channelCount;
     configured_ = true;
     return true;
@@ -92,6 +97,10 @@ void DiracBiquadFilter::Reset() {
 
 void DiracBiquadFilter::SetAttenuationDb(double attenuationDb) {
     tilt_.SetAttenuationDb(attenuationDb);
+}
+
+void DiracBiquadFilter::SetSumDiff(float sumDiff) {
+    width_.SetWidth(sumDiff);
 }
 
 // Static headroom policy: the signature contributes gain too, so the preamp
@@ -195,6 +204,7 @@ void DiracBiquadFilter::Process(const void *input, void *output, size_t frameCou
                     staged[ch] = ProcessSample(in[base + ch], ch);
                 }
                 mono_.ProcessFrame(staged, channelCount);
+                width_.ProcessFrame(staged, channelCount);
                 for (unsigned ch = 0; ch < channelCount; ++ch) {
                     float y = staged[ch];
                     if (accumulate) {
@@ -214,6 +224,7 @@ void DiracBiquadFilter::Process(const void *input, void *output, size_t frameCou
                     staged[ch] = ProcessSample(static_cast<float>(in[base + ch]) / 32768.0f, ch);
                 }
                 mono_.ProcessFrame(staged, channelCount);
+                width_.ProcessFrame(staged, channelCount);
                 for (unsigned ch = 0; ch < channelCount; ++ch) {
                     float y = staged[ch];
                     if (accumulate) {
