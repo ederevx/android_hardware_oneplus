@@ -14,13 +14,13 @@
  * limitations under the License.
  */
 
-// Host-side filter for the Bluetooth A2DP output.
+// Host-side filter for the outputs the Dirac DSP topology cannot reach.
 //
 // Dirac on this platform is an ADSP module registered for the headset and the
-// speaker only (capi_v2_dirac_eheadset / capi_v2_dirac_ipowersound), and the
-// A2DP software path does not enter the ADM at all, so the DSP never sees
-// Bluetooth audio. This effect voices the A2DP output on the host instead and
-// gates itself to the A2DP devices, so the speaker and wired outputs keep the
+// speaker only (capi_v2_dirac_eheadset / capi_v2_dirac_ipowersound). Bluetooth
+// A2DP and the remote submix used by Android Auto do not enter the ADM at all,
+// so the DSP never sees them. This effect voices those outputs on the host
+// instead and gates itself to them, so the speaker and wired outputs keep the
 // ADSP processing and are never processed twice.
 //
 // The gate is driven by EFFECT_CMD_SET_DEVICE, which the framework sends
@@ -223,6 +223,14 @@ static void DiracBiquad_PassThrough(const dirac_biquad_object_t *context,
 // Cheap throttle for the live conf check: about every 85 ms at 48 kHz.
 static const unsigned kReloadCheckFrames = 4096;
 
+// The outputs whose audio bypasses the ADM: Bluetooth A2DP and the remote
+// submix that Android Auto and other projection consumers use. The device value
+// is the OR of every patch sink, so the submix test is a mask.
+static bool DiracBiquad_IsFallbackOutput(audio_devices_t device) {
+    return audio_is_a2dp_out_device(device) ||
+           (device & AUDIO_DEVICE_OUT_REMOTE_SUBMIX) != 0;
+}
+
 // Re-parses the QEM state file when its mtime has moved. Called from the
 // process path so a switch toggle takes effect on the next buffer without a
 // device change or an audioserver restart.
@@ -268,7 +276,7 @@ static int32_t DiracBiquad_Process(effect_handle_t self,
     // The device is read on every call rather than only when the command
     // arrives, so a device switch mid-stream takes effect on the next buffer.
     if (!context->enabled || !context->diracEnabled || !context->fallback ||
-        !audio_is_a2dp_out_device(context->device) || !context->filterReady) {
+        !DiracBiquad_IsFallbackOutput(context->device) || !context->filterReady) {
         DiracBiquad_PassThrough(context, inBuffer, outBuffer);
         return 0;
     }
@@ -361,9 +369,10 @@ static int32_t DiracBiquad_Command(effect_handle_t self,
             }
             const int fd = static_cast<int>(*reinterpret_cast<uint32_t *>(pCmdData));
             dprintf(fd, "Dirac Biquad Filter: state %u enabled %d dirac %d fallback %d device %#x a2dp %d"
-                    " volume_db=%.1f gains=%d;%d;%d;%d;%d;%d;%d\n",
+                    " submix %d volume_db=%.1f gains=%d;%d;%d;%d;%d;%d;%d\n",
                     context->state, context->enabled, context->diracEnabled, context->fallback,
-                    context->device, audio_is_a2dp_out_device(context->device), context->volumeDb,
+                    context->device, audio_is_a2dp_out_device(context->device),
+                    (context->device & AUDIO_DEVICE_OUT_REMOTE_SUBMIX) != 0, context->volumeDb,
                     context->gainsHalfDb[0], context->gainsHalfDb[1], context->gainsHalfDb[2],
                     context->gainsHalfDb[3], context->gainsHalfDb[4], context->gainsHalfDb[5],
                     context->gainsHalfDb[6]);
