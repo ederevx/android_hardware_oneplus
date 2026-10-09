@@ -375,13 +375,13 @@ static int32_t DiracBiquad_Command(effect_handle_t self,
             const int fd = static_cast<int>(*reinterpret_cast<uint32_t *>(pCmdData));
             dprintf(fd, "Dirac Biquad Filter: state %u enabled %d dirac %d fallback %d sumdiff %.3f"
                     " device %#x dsp %d volume_db=%.1f gains=%d;%d;%d;%d;%d;%d;%d"
-                    " rumble_hp %.0f clip_knee %.3f\n",
+                    " clip_knee %.3f\n",
                     context->state, context->enabled, context->diracEnabled, context->fallback,
                     context->sumdiff, context->device, DiracBiquad_IsDspOutput(context->device),
                     context->volumeDb, context->gainsHalfDb[0], context->gainsHalfDb[1],
                     context->gainsHalfDb[2], context->gainsHalfDb[3], context->gainsHalfDb[4],
                     context->gainsHalfDb[5], context->gainsHalfDb[6],
-                    DiracBiquadFilter::kRumbleCornerHz, static_cast<double>(SoftClip::kKnee));
+                    static_cast<double>(SoftClip::kKnee));
             break;
         }
 

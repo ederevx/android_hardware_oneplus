@@ -51,13 +51,12 @@
 // pslimiter/safelimiter/timedomainlimiter chain. The preamp below is a static
 // headroom stand-in for those limiters, not a limiter.
 //
-// Two stages stand in for what this leg cannot have. The module's own input
-// rumble high-pass runs here ahead of the signature, because the stock cal set
-// zeroes the module's copy and the ADSP topology can afford that with its
-// limiters behind it, while this leg cannot: the signature's 17.5 Hz shelf
-// would otherwise spend low-frequency headroom on content no sink can
-// reproduce. And the clamp became SoftClip, that safelimiter stand-in, so the
-// cascade's overshoot can no longer modulate the whole band.
+// One stage stands in for what this leg cannot have: the clamp became SoftClip,
+// the safelimiter's stand-in, so the cascade's overshoot can no longer modulate
+// the whole band. The module's own input and output rumble filters ("Input HP
+// fchz" / "Output HP fchz", named in libdirac-capiv2.so) are zeroed in this cal
+// set, so this leg adds no high-pass either: a corner would be an invention,
+// and faithfulness here means doing what the OEM's own calibration does.
 //
 // Before the user EQ the chain applies a fixed approximation of one Dirac
 // signature: the FIR response of the hdsound slot 8 filter
@@ -89,14 +88,6 @@ class DiracBiquadFilter {
             68.0, 165.0, 400.0, 972.0, 2000.0, 6000.0, 14000.0};
 
     static constexpr unsigned kMaxChannels = 8;
-
-    // The module's input rumble high-pass: second order at a Butterworth corner,
-    // so it has no peak and is unity at high frequency. That corner keeps the
-    // audible band intact (-1.2 dB at 35 Hz), and because the response never
-    // exceeds unity the preamp probe, which bounds the cascade from above, does
-    // not need to know this stage exists.
-    static constexpr double kRumbleCornerHz = 25.0;
-    static constexpr double kRumbleQ = 0.70710678;
 
     // Fixed Dirac signature sections. The parameters come from
     // DiracBiquadTable, which selects them for the stream rate; the
@@ -136,7 +127,6 @@ class DiracBiquadFilter {
     // Unity, or the attenuation that keeps the true cascade peak at 0 dBFS.
     float ComputePreampGain(unsigned sampleRateHz) const;
 
-    Biquad rumble_[kMaxChannels];
     Biquad stages_[kMaxChannels][kBandCount];
     Biquad signature_[kMaxChannels][kSignatureCount];
     LoudnessTilt tilt_;

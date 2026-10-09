@@ -18,26 +18,34 @@
 
 #include <cmath>
 
-// Safety soft-clip for the A2DP effect.
+// Safety soft-clip for the host leg.
 //
 // Every Dirac topology ends in a limiter trio - pslimiter, safelimiter and
-// timedomainlimiter - and the signature this effect approximates was fitted
-// from a chain that had them. This leg reproduces the safelimiter half and
-// nothing more: an odd-symmetric memoryless knee that is exactly transparent
-// below kKnee, carries no state, adds no look-ahead and therefore no latency
-// for the framework to account for, and is bounded by unity by construction, so
-// it replaces the hard clamp rather than preceding it.
+// timedomainlimiter, whose sources are named inside libdirac-capiv2.so - and the
+// signature this effect approximates was fitted from a chain that had them. This
+// leg reproduces the safelimiter's role and only its role: an odd-symmetric
+// memoryless knee that is exactly transparent below kKnee, carries no state, adds
+// no look-ahead and therefore no latency for the framework to account for, and is
+// bounded by unity by construction, so it replaces the hard clamp rather than
+// preceding it.
 //
 // It exists because the cascade in front of it is a sixteen-section bank with
 // large low-frequency gain: its overshoot used to land on that hard clamp, and a
 // hard-clipped bass envelope modulates everything above it, which is audible as
 // crunch on bass-heavy material rather than as an overload.
+//
+// Faithfulness: the limiter trio's threshold, knee and time constants are not
+// exposed anywhere this ROM can read - not in the cal data, not in
+// dirac_resource.dar, not in the interface database - so nothing beyond the
+// knee's position is chosen here, and it sits at full scale, where a safety
+// limiter sits. Attack, release and look-ahead are deliberately absent rather
+// than guessed.
 class SoftClip {
   public:
-    // Full scale less 3 dB: where a signal has no headroom left, and early
-    // enough that the knee is already working by the time the cascade's
-    // overshoot would otherwise reach the ceiling.
-    static constexpr float kKnee = 0.70794578f;
+    // Full scale less half a dB: the last point at which a sample is still
+    // below the ceiling, so the knee only ever catches the overshoot the static
+    // preamp cannot bound.
+    static constexpr float kKnee = 0.94406088f;
 
     // One saturation per sample, against the nineteen biquads around it, so the
     // curve can be the honest tanh rather than a cheap approximation of it.

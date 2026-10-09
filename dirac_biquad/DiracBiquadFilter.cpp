@@ -65,14 +65,6 @@ bool DiracBiquadFilter::Configure(unsigned sampleRateHz, unsigned channelCount,
         }
     }
 
-    // Ahead of the signature, and outside the preamp probe: it is identity at
-    // high frequency and never above unity, so it cannot raise the peak the
-    // probe is looking for.
-    for (unsigned ch = 0; ch < channelCount; ++ch) {
-        rumble_[ch].SetPrototype(BiquadType::kHighPass, sampleRateHz, kRumbleCornerHz, kRumbleQ,
-                                 0.0);
-    }
-
     preampGain_ = ComputePreampGain(sampleRateHz);
 
     // The tilt is rebuilt for the new rate; it is not part of the preamp probe.
@@ -93,7 +85,6 @@ bool DiracBiquadFilter::Configure(unsigned sampleRateHz, unsigned channelCount,
 
 void DiracBiquadFilter::Reset() {
     for (unsigned ch = 0; ch < kMaxChannels; ++ch) {
-        rumble_[ch].Reset();
         for (size_t section = 0; section < kSignatureCount; ++section) {
             signature_[ch][section].Reset();
         }
@@ -182,9 +173,6 @@ double DiracBiquadFilter::CascadeMagnitudeAt(double sampleRateHz, double frequen
 }
 
 float DiracBiquadFilter::ProcessSample(float x, unsigned channel) {
-    // First, so nothing downstream - signature, EQ, tilt - ever sees the
-    // sub-bass the signature would otherwise boost.
-    x = rumble_[channel].ProcessSample(x);
     for (size_t section = 0; section < kSignatureCount; ++section) {
         x = signature_[channel][section].ProcessSample(x);
     }
