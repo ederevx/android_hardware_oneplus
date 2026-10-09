@@ -36,6 +36,9 @@ import java.util.concurrent.atomic.AtomicReference
 object DiracQemEffect {
     private const val TAG_BANDS = "DiracQemBands"
 
+    /** Distinguishes this probe build from the shipping one in logcat. */
+    private const val TAG_LUT_PROBE = "DiracQemLutProbe"
+
     /**
      * Frames for the speaker name the sound device explicitly instead of the
      * audio device, because the HAL's own output routing does not have to
@@ -139,8 +142,12 @@ object DiracQemEffect {
      * same frame is accepted. Every other frame stays on the ACDB path.
      */
     private fun sendSumDiff(context: Context, output: Int) {
+        // DEV PROBE: the LUT experiment needs the ACDB-validated path, not
+        // the raw bypass the shipping frame uses.
+        Log.i(TAG_LUT_PROBE, "Sum/Diff probe: cal_caltype=ACDB (0) for the LUT check")
+
         sendOp(context, output, QemProtocol.PARAM_SUMDIFF,
-            QemProtocol.floatPayload(DiracState.sumDiff(context)), QemProtocol.CALTYPE_RAW)
+            QemProtocol.floatPayload(DiracState.sumDiff(context)), QemProtocol.CALTYPE_ACDB)
     }
 
     private fun send(context: Context, key: Int, payload: ByteArray) {
@@ -238,7 +245,7 @@ object DiracQemEffect {
             moduleFor(output), topoFor(output), devicesFor(output),
             QemProtocol.PARAM_ENABLE, QemProtocol.intPayload(0), sndDevIdFor(output))
         sendOp(context, output, QemProtocol.PARAM_SUMDIFF,
-            QemProtocol.floatPayload(QemProtocol.SUMDIFF_OFF), QemProtocol.CALTYPE_RAW)
+            QemProtocol.floatPayload(QemProtocol.SUMDIFF_OFF), QemProtocol.CALTYPE_ACDB)
     }
 
     private fun routeBit(output: Int): Int = 1 shl output
