@@ -32,7 +32,7 @@
 // read failure keeps the last good state rather than bypassing the effect; see
 // DiracBiquadConfig. Parity covers the seven user-EQ gains and the enable flag
 // only: the DAR device correction, the HDSOUND filter index and the limiter
-// chain are not reproduced, so A2DP cannot sound identical to the wired route.
+// chain are not reproduced, so a host output cannot sound identical to the wired route.
 //
 // Effect order: AudioFlinger applies the stream volume per track in
 // prepareTracks_l (mMasterVolume * track port volume) and runs the output
@@ -359,7 +359,7 @@ static int32_t DiracBiquad_Command(effect_handle_t self,
             }
             context->device = static_cast<audio_devices_t>(*reinterpret_cast<uint32_t *>(pCmdData));
             ALOGV("%s: device %#x", __func__, context->device);
-            // Re-read the QEM parity state on every device change so an A2DP
+            // Re-read the QEM parity state on every device change so a host
             // transition picks up the current app setting.
             DiracBiquad_ReloadConfig(context);
             break;
@@ -374,12 +374,14 @@ static int32_t DiracBiquad_Command(effect_handle_t self,
             }
             const int fd = static_cast<int>(*reinterpret_cast<uint32_t *>(pCmdData));
             dprintf(fd, "Dirac Biquad Filter: state %u enabled %d dirac %d fallback %d sumdiff %.3f"
-                    " device %#x dsp %d volume_db=%.1f gains=%d;%d;%d;%d;%d;%d;%d\n",
+                    " device %#x dsp %d volume_db=%.1f gains=%d;%d;%d;%d;%d;%d;%d"
+                    " clip_knee %.3f\n",
                     context->state, context->enabled, context->diracEnabled, context->fallback,
                     context->sumdiff, context->device, DiracBiquad_IsDspOutput(context->device),
                     context->volumeDb, context->gainsHalfDb[0], context->gainsHalfDb[1],
                     context->gainsHalfDb[2], context->gainsHalfDb[3], context->gainsHalfDb[4],
-                    context->gainsHalfDb[5], context->gainsHalfDb[6]);
+                    context->gainsHalfDb[5], context->gainsHalfDb[6],
+                    static_cast<double>(SoftClip::kKnee));
             break;
         }
 

@@ -16,7 +16,7 @@
 
 #pragma once
 
-// Biquad (second-order IIR) section for the A2DP filter chain.
+// Biquad (second-order IIR) section for the host filter chain.
 //
 // Coefficients follow the Audio EQ Cookbook (Robert Bristow-Johnson, W3C
 // NOTE-audio-eq-cookbook) normalized by a0, and the runtime uses the direct

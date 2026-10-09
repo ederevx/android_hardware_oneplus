@@ -18,7 +18,7 @@
 
 #include "Biquad.h"
 
-// Low-band mono fold for the A2DP effect.
+// Low-band mono fold for the host leg.
 //
 // The Dirac module's `noise` plugin carries a "Sum/Diff Balance" control, i.e.
 // mid/side processing, which a per-channel biquad cascade cannot express: every
