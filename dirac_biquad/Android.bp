@@ -1,8 +1,9 @@
-// Host-side filter for the Bluetooth A2DP output.
+// Host-side filter for the outputs the Dirac DSP does not voice.
 //
-// Dirac is an ADSP module on this platform, registered for the headset and the
-// speaker only, and the A2DP software path never enters the ADM, so the DSP
-// never processes Bluetooth audio. Voice the A2DP output on the host instead.
+// Dirac is an ADSP module on this platform, registered for the speaker and the
+// headset only, and those two are voiced by the ADSP: this effect passes through
+// on them. Every other output bypasses the ADM and is ours - Bluetooth A2DP, the
+// remote submix Android Auto uses, USB, and the rest - so voice those here.
 //
 // Legacy soundfx library, not an AIDL effect service: the effects HAL on this
 // device is android.hardware.audio.effect@6.0, which loads soundfx shared
@@ -22,6 +23,7 @@ cc_library_shared {
         "EffectDiracBiquad.cpp",
         "LoudnessTilt.cpp",
         "LowBandMono.cpp",
+        "SoftClip.cpp",
         "StereoWidth.cpp",
     ],
 

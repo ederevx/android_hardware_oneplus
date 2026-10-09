@@ -16,7 +16,7 @@
 
 #pragma once
 
-// Mid/side stereo width for the A2DP effect.
+// Mid/side stereo width for the host leg.
 //
 // The Dirac module's `noise` plugin carries a "Sum/Diff Balance" control, i.e.
 // mid/side processing, that a per-channel biquad cascade cannot express. This
