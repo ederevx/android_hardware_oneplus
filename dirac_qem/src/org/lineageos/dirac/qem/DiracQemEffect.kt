@@ -127,6 +127,22 @@ object DiracQemEffect {
             SCALAR_TONAL_BALANCE, if (DiracState.isMovie(context)) MOVIE_TONAL_BALANCE else DEFAULT_TONAL_BALANCE))
     }
 
+    /** Pushes the stored Sum/Diff stereo width for the live route. */
+    fun setSumDiff(context: Context) {
+        sendSumDiff(context, DiracState.output(context))
+    }
+
+    /**
+     * The Sum/Diff frame is the one param the ACDB LUT does not carry, so it is
+     * sent raw: cal_caltype=0 makes the ADM reject it with ADSP_EBADPARAM from
+     * ADM_CMD_SET_PP_PARAMS, while cal_caltype=1 bypasses the lookup and the
+     * same frame is accepted. Every other frame stays on the ACDB path.
+     */
+    private fun sendSumDiff(context: Context, output: Int) {
+        sendOp(context, output, QemProtocol.PARAM_SUMDIFF,
+            QemProtocol.floatPayload(DiracState.sumDiff(context)), QemProtocol.CALTYPE_RAW)
+    }
+
     /** Pushes the stored Bluetooth-connected loudness scalar from the owned state. */
     fun setBluetooth(context: Context) {
         send(context, SCALAR_LOUDNESS, QemProtocol.scalarPayload(
@@ -194,6 +210,7 @@ object DiracQemEffect {
         sendOp(context, output, QemProtocol.PARAM_EQ_ENABLE, QemProtocol.intPayload(1))
         sendOp(context, output, QemProtocol.PARAM_EQ_BANDS, QemProtocol.eqBandsPayload(bands))
         sendOp(context, output, QemProtocol.PARAM_SFX_ENABLE, QemProtocol.intPayload(1))
+        sendSumDiff(context, output)
         if (output == DiracState.OUTPUT_EXTERNAL) {
             sendOp(context, output, QemProtocol.PARAM_HDSOUND_ENABLE, QemProtocol.intPayload(1))
             sendOp(context, output, QemProtocol.PARAM_HDSOUND_FILTERIDX,
@@ -201,16 +218,24 @@ object DiracQemEffect {
         }
     }
 
-    private fun sendOp(context: Context, output: Int, param: Int, payload: ByteArray) {
+    private fun sendOp(
+        context: Context,
+        output: Int,
+        param: Int,
+        payload: ByteArray,
+        calType: Int = QemProtocol.CALTYPE_ACDB,
+    ) {
         QemTransport(context).send(
             moduleFor(output), topoFor(output), devicesFor(output), param, payload,
-            sndDevIdFor(output))
+            sndDevIdFor(output), calType = calType)
     }
 
     private fun sendDisable(context: Context, output: Int) {
         QemTransport(context).send(
             moduleFor(output), topoFor(output), devicesFor(output),
             QemProtocol.PARAM_ENABLE, QemProtocol.intPayload(0), sndDevIdFor(output))
+        sendOp(context, output, QemProtocol.PARAM_SUMDIFF,
+            QemProtocol.floatPayload(QemProtocol.SUMDIFF_OFF), QemProtocol.CALTYPE_RAW)
     }
 
     private fun routeBit(output: Int): Int = 1 shl output

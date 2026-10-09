@@ -25,11 +25,13 @@ package org.lineageos.dirac.biquad;
  */
 interface IDiracBiquadState {
     /**
-     * Persist the effect's state. Bands are seven half-dB gains. `volumeDb`
-     * is the stream attenuation in dB below the reference, or a value <= 0
-     * when the volume is unknown (the effect then leaves the tilt off).
+     * Persist the effect's state. Bands are seven half-dB gains. `sumdiff`
+     * is the mid/side width in 0..1 (0 = bypass). `volumeDb` is the stream
+     * attenuation in dB below the reference, or a value <= 0 when the volume
+     * is unknown (the effect then leaves the tilt off).
      */
-    void setState(boolean enabled, boolean fallback, in int[] bandsHalfDb, double volumeDb);
+    void setState(boolean enabled, boolean fallback, float sumdiff, in int[] bandsHalfDb,
+                  double volumeDb);
 
     /**
      * Whether a state has been persisted since this service started. The
@@ -42,6 +44,9 @@ interface IDiracBiquadState {
 
     /** The fallback flag of the last persisted state. */
     boolean getFallback();
+
+    /** The mid/side width of the last persisted state, in 0..1. */
+    float getSumDiff();
 
     /** The seven half-dB band gains of the last persisted state. */
     int[] getBandsHalfDb();
