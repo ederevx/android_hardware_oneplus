@@ -22,35 +22,86 @@ import android.media.AudioManager
 import android.os.Bundle
 import android.util.Log
 
+/** One frame's parameter, its value text, and the two optional suffixes. */
+private data class Entry(
+    val param: Int,
+    val valueText: String?,
+    val isFloat: Boolean,
+    val calType: Int?,
+) {
+    fun intOr(fallback: Int): Int = valueText?.let { parseNumber(it) } ?: fallback
+
+    fun floatOr(fallback: Int): Float =
+        valueText?.toFloatOrNull() ?: parseNumber(valueText)?.toFloat() ?: fallback.toFloat()
+}
+
+/** Splits `0x12d35=0@0,0x12d02=0.5:f@1` into entries: `<param>[=<value>][:f][@caltype]`. */
+private fun parseEntries(raw: String?): List<Entry> = raw.orEmpty()
+    .split(',', ' ', ';')
+    .mapNotNull { token ->
+        val trimmed = token.trim()
+        if (trimmed.isEmpty()) {
+            return@mapNotNull null
+        }
+        val atSplit = trimmed.split('@', limit = 2)
+        val eqSplit = atSplit[0].split('=', limit = 2)
+        val colonSplit = eqSplit.getOrNull(1).orEmpty().split(':', limit = 2)
+        val param = parseNumber(eqSplit[0]) ?: return@mapNotNull null
+        Entry(
+            param = param,
+            valueText = colonSplit[0].ifEmpty { null },
+            isFloat = colonSplit.getOrNull(1)?.trim()?.lowercase() == "f",
+            calType = atSplit.getOrNull(1)?.let { parseNumber(it.trim()) },
+        )
+    }
+
+/** Accepts decimal or 0x-prefixed hex. */
+private fun parseNumber(raw: String?): Int? = raw?.trim()?.let {
+    runCatching {
+        if (it.startsWith("0x", ignoreCase = true)) {
+            it.substring(2).toLong(16).toInt()
+        } else {
+            it.toLong().toInt()
+        }
+    }.getOrNull()
+}
+
 /**
  * DEV PROBE, not a shipped feature.
  *
- * Plays a stereo tone so a mixer (path=0) ADM stream is open, then walks
- * the requested topologies against the requested HAL sound devices and sends
- * one Dirac QEM frame per combination with cal_caltype=1, which makes
- * libacdbloader dump the kernel's active RTAC ADM table and log every failed
- * lookup.
+ * Plays a stereo tone so a mixer (path=0) ADM stream is open, then walks the
+ * requested topologies against the requested HAL sound devices and sends one
+ * Dirac QEM frame per (combo, parameter). One frame is one setParameters call
+ * carrying one parameter, so an ADM or DSP refusal names exactly one suspect;
+ * the parameters a test mixes are deliberately never packed into one call.
  *
  * Trigger:
  *
  *   adb shell am start -n org.lineageos.dirac.tone/.ToneProbeActivity \
- *       --ei duration 60 --es topos "0x10012d00,0x10012d01,0x10312" \
- *       --es devids "2,9" --es device speaker --es usage media
+ *       --es topos "0x10012d01" --es devids "0" --es device headset \
+ *       --es module "0x12d01" --es params "0x12d35=0@0,0x12d01=1@0,0x12d02=0.5:f@1"
  *
  * Extras: duration seconds (default 60), topos (default 0x10012d00,
- * 0x10012d01,0x10312), devids snd_device ids (2 speaker, 9 headphones; the
- * default is the connected output resolved by [ToneTarget]), device
- * speaker|headset|earpiece and usage media|alarm select the stream's preferred
- * output and usage (default is the media output), apptype (69936),
- * rate (48000), caltype (1), persist (0), module (0x12D00, the speaker's
- * module; the headset topology 0x10012d01 instantiates 0x12D01), param
- * (0x12D01), value (1), params (a comma list of `param` or `param=value`
- * entries, hex or decimal, all sent in sequence into the one held stream,
- * e.g. module=0x12D01 params="0x12d01=1,0x12d03=3,0x12d04=3"), delay ms
- * before the first frame (2000), gap ms between topo/device combos (1200),
- * seqgap ms between the params of one combo (150), freq Hz (1000). The long
- * names durationMs/delayMs/gapMs/sndDevIds/appType/sampleRate/frequencyHz are
- * accepted as aliases of the short ones.
+ * 0x10012d01,0x10312), devids snd_device_t ids (2 speaker, 9 headphones; 0 is
+ * the framing the shipping app uses - cal_devid=0 alone, no cal_snddevid - and
+ * the only one the wired route accepts; the default is the connected output
+ * resolved by [ToneTarget]), device speaker|headset|earpiece and usage
+ * media|alarm select the stream's preferred output and usage (default is the
+ * media output), apptype (69936), rate (48000), caltype (1, the raw path; 0 asks
+ * the ACDB table), persist (0), module (0x12D00, the speaker's module; the
+ * headset topology 0x10012d01 instantiates 0x12D01), param (0x12D01), value (1).
+ *
+ * params is the parameter list, one entry per frame, each `param` or
+ * `param=value`, with an optional `:f` selecting a float payload and an optional
+ * `@caltype` overriding the request's caltype for that entry only - so one run
+ * can turn the equalizer off through the table, enable the module through the
+ * table, and push the balance raw, three frames apart and nothing riding along.
+ * With no params the single `param`/`value` pair is sent with the request's
+ * caltype. Other extras: delay ms before the first frame (2000), gap ms between
+ * topo/device combos (1200), seqgap ms between the params of one combo (150),
+ * freq Hz (1000). The long names
+ * durationMs/delayMs/gapMs/sndDevIds/appType/sampleRate/frequencyHz are accepted
+ * as aliases of the short ones.
  */
 class ToneProbeActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -74,28 +125,28 @@ class ToneProbeActivity : Activity() {
             var index = 0
             val combos = request.topos.size * request.sndDevIds.size
             val perComboMs = request.gapMs +
-                (request.params.size - 1).coerceAtLeast(0) * request.seqGapMs
+                (request.entries.size - 1).coerceAtLeast(0) * request.seqGapMs
             for (topo in request.topos) {
                 for (devId in request.sndDevIds) {
                     index++
                     Log.i(TAG, "combo $index/$combos topo=0x${Integer.toHexString(topo)}" +
                         " snddev=$devId module=0x${Integer.toHexString(request.module)}" +
-                        " params=" + request.params.joinToString { "0x" + Integer.toHexString(it) })
-                    request.params.forEachIndexed { i, param ->
+                        " params=" +
+                        request.entries.joinToString { "0x" + Integer.toHexString(it.param) })
+                    request.entries.forEachIndexed { i, entry ->
                         frames.send(
                             topo = topo,
                             appType = request.appType,
                             sndDevId = devId,
                             sampleRate = request.sampleRate,
-                            calType = request.calType,
+                            calType = entry.calType ?: request.calType,
                             persist = request.persist,
                             module = request.module,
-                            param = param,
-                            value = request.values.getOrElse(i) {
-                                request.values.lastOrNull() ?: request.value
-                            },
+                            param = entry.param,
+                            value = entry.intOr(request.value),
+                            floatValue = if (entry.isFloat) entry.floatOr(request.value) else null,
                         )
-                        if (i < request.params.size - 1) {
+                        if (i < request.entries.size - 1) {
                             Thread.sleep(request.seqGapMs)
                         }
                     }
@@ -126,10 +177,8 @@ class ToneProbeActivity : Activity() {
         val calType: Int,
         val persist: Int,
         val module: Int,
-        val param: Int,
         val value: Int,
-        val params: List<Int>,
-        val values: List<Int>,
+        val entries: List<Entry>,
         val seqGapMs: Long,
         val frequencyHz: Int,
     ) {
@@ -139,7 +188,6 @@ class ToneProbeActivity : Activity() {
                     default = DEFAULT_DURATION)
                 val param = intExtra(intent, EXTRA_PARAM, default = QemFrames.PARAM_ENABLE)
                 val value = intExtra(intent, EXTRA_VALUE, default = QemFrames.ENABLE)
-                val paramValues = parseParamValues(stringExtra(intent, EXTRA_PARAMS), value)
                 return Request(
                     durationMs = duration.coerceIn(MIN_DURATION, MAX_DURATION) * 1000L,
                     delayMs = intExtra(intent, EXTRA_DELAY, EXTRA_DELAY_MS,
@@ -153,13 +201,13 @@ class ToneProbeActivity : Activity() {
                         default = DEFAULT_APPTYPE),
                     sampleRate = intExtra(intent, EXTRA_RATE, EXTRA_SAMPLERATE,
                         default = DEFAULT_RATE),
-                    calType = intExtra(intent, EXTRA_CALTYPE, default = QemFrames.CAL_TYPE_POPP),
+                    calType = intExtra(intent, EXTRA_CALTYPE, default = QemFrames.CAL_TYPE_RAW),
                     persist = intExtra(intent, EXTRA_PERSIST, default = DEFAULT_PERSIST),
                     module = intExtra(intent, EXTRA_MODULE, default = QemFrames.MODULE_INTERNAL),
-                    param = param,
                     value = value,
-                    params = paramValues.map { it.first }.ifEmpty { listOf(param) },
-                    values = paramValues.map { it.second }.ifEmpty { listOf(value) },
+                    entries = parseEntries(stringExtra(intent, EXTRA_PARAMS))
+                        .ifEmpty { listOf(Entry(param, valueText = null, isFloat = false,
+                            calType = null)) },
                     seqGapMs = intExtra(intent, EXTRA_SEQGAP, default = DEFAULT_SEQGAP)
                         .coerceAtLeast(0).toLong(),
                     frequencyHz = intExtra(intent, EXTRA_FREQ, EXTRA_FREQUENCY,
@@ -190,33 +238,7 @@ class ToneProbeActivity : Activity() {
 
             private fun parseInts(raw: String?): List<Int> = raw.orEmpty()
                 .split(',', ' ', ';')
-                .mapNotNull { parseNumber(it.trim()) }
-
-            /** Splits "0x12d01=1,0x12d03=3" into (param, value) pairs. */
-            private fun parseParamValues(raw: String?, fallbackValue: Int): List<Pair<Int, Int>> =
-                raw.orEmpty()
-                    .split(',', ' ', ';')
-                    .mapNotNull { token ->
-                        val trimmed = token.trim()
-                        if (trimmed.isEmpty()) {
-                            null
-                        } else {
-                            val parts = trimmed.split('=', limit = 2)
-                            val param = parseNumber(parts[0]) ?: return@mapNotNull null
-                            val value = if (parts.size == 2) parseNumber(parts[1]) else null
-                            param to (value ?: fallbackValue)
-                        }
-                    }
-
-            private fun parseNumber(raw: String?): Int? = raw?.let {
-                runCatching {
-                    if (it.startsWith("0x", ignoreCase = true)) {
-                        it.substring(2).toLong(16).toInt()
-                    } else {
-                        it.toLong().toInt()
-                    }
-                }.getOrNull()
-            }
+                .mapNotNull { parseNumber(it) }
 
             private const val EXTRA_DURATION = "duration"
             private const val EXTRA_DURATION_MS = "durationMs"
