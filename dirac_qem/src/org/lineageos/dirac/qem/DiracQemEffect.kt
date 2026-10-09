@@ -127,6 +127,16 @@ object DiracQemEffect {
             SCALAR_TONAL_BALANCE, if (DiracState.isMovie(context)) MOVIE_TONAL_BALANCE else DEFAULT_TONAL_BALANCE))
     }
 
+    /** Pushes the stored Sum/Diff stereo width for the live route. */
+    fun setSumDiff(context: Context) {
+        sendSumDiff(context, DiracState.output(context))
+    }
+
+    private fun sendSumDiff(context: Context, output: Int) {
+        sendOp(context, output, QemProtocol.PARAM_SUMDIFF,
+            QemProtocol.floatPayload(DiracState.sumDiff(context)))
+    }
+
     /** Pushes the stored Bluetooth-connected loudness scalar from the owned state. */
     fun setBluetooth(context: Context) {
         send(context, SCALAR_LOUDNESS, QemProtocol.scalarPayload(
@@ -194,6 +204,7 @@ object DiracQemEffect {
         sendOp(context, output, QemProtocol.PARAM_EQ_ENABLE, QemProtocol.intPayload(1))
         sendOp(context, output, QemProtocol.PARAM_EQ_BANDS, QemProtocol.eqBandsPayload(bands))
         sendOp(context, output, QemProtocol.PARAM_SFX_ENABLE, QemProtocol.intPayload(1))
+        sendSumDiff(context, output)
         if (output == DiracState.OUTPUT_EXTERNAL) {
             sendOp(context, output, QemProtocol.PARAM_HDSOUND_ENABLE, QemProtocol.intPayload(1))
             sendOp(context, output, QemProtocol.PARAM_HDSOUND_FILTERIDX,
@@ -211,6 +222,7 @@ object DiracQemEffect {
         QemTransport(context).send(
             moduleFor(output), topoFor(output), devicesFor(output),
             QemProtocol.PARAM_ENABLE, QemProtocol.intPayload(0), sndDevIdFor(output))
+        sendOp(context, output, QemProtocol.PARAM_SUMDIFF, QemProtocol.floatPayload(QemProtocol.SUMDIFF_OFF))
     }
 
     private fun routeBit(output: Int): Int = 1 shl output

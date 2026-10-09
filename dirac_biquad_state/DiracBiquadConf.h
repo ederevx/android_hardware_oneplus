@@ -40,17 +40,18 @@ class DiracBiquadConf {
     struct State {
         bool enabled = false;
         bool fallback = false;
+        float sumdiff = 0.0f;
         std::vector<int32_t> bandsHalfDb;
         double volumeDb = kUnknownVolumeDb;
     };
 
-    // Writes enabled, fallback, the clamped band gains and the validated stream
-    // attenuation atomically. A call whose serialized content matches the last
-    // one is a no-op: no temp file, no rename and no mtime change, so a
-    // repeated publish cannot make the effect reload. Returns true when the
-    // state is on disk, including the no-op case.
-    bool Write(bool enabled, bool fallback, const std::vector<int32_t> &bandsHalfDb,
-               double volumeDb);
+    // Writes enabled, fallback, the 0..1 mid/side width, the clamped band
+    // gains and the validated stream attenuation atomically. A call whose
+    // serialized content matches the last one is a no-op: no temp file, no
+    // rename and no mtime change, so a repeated publish cannot make the effect
+    // reload. Returns true when the state is on disk, including the no-op case.
+    bool Write(bool enabled, bool fallback, float sumdiff,
+               const std::vector<int32_t> &bandsHalfDb, double volumeDb);
 
     // The last state successfully put on disk. False until the first Write.
     bool GetState(State *state) const;

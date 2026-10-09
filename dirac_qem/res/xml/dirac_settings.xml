@@ -17,6 +17,13 @@
         android:widgetLayout="@layout/preference_widget_switch_compat"
         android:persistent="false" />
 
+    <!-- Drives the ADSP panorama2 Sum/Diff balance on every supported route
+         (speaker, wired headset) and the host StereoWidth state where the
+         fallback runs; it needs neither the fallback build flag nor the
+         fallback switch to be present or enabled. -->
+    <org.lineageos.dirac.qem.SumDiffPreference
+        android:key="dirac_sumdiff" />
+
     <ListPreference
         android:key="dirac_model"
         android:title="@string/dirac_model_title"
