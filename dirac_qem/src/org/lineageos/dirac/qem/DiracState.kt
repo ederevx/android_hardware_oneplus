@@ -283,7 +283,9 @@ object DiracState {
      */
     fun isWideningDspHandled(context: Context): Boolean {
         ensureLoaded(context)
-        return output(context) == OUTPUT_EXTERNAL || !bluetoothConnected
+        // PROBE ONLY, never to merge: the wired route has to expose a live
+        // slider so the ADSP Sum/Diff balance can be swept on a live stream.
+        return false
     }
 
     fun appliedRoutes(context: Context): Int {
