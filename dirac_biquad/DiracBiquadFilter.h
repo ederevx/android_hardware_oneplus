@@ -23,6 +23,7 @@
 #include "Biquad.h"
 #include "DiracBiquadTable.h"
 #include "LoudnessTilt.h"
+#include "StereoWidth.h"
 
 // Host-side biquad curve with Dirac-QEM parity.
 //
@@ -63,6 +64,12 @@
 // the preamp and is deliberately excluded from the preamp probe, so the static
 // headroom stays a property of the signature and EQ alone. The tilt belongs to
 // LoudnessTilt, which owns its law, shelves and caps.
+//
+// The module's cross-channel Sum/Diff behaviour is not expressible by the
+// per-channel cascade; StereoWidth restores it as a final mid/side stage, a
+// side high-pass and a side gain. Both act on the side only, so the signature,
+// EQ and tilt keep their exact per-channel response and the mid path is
+// untouched.
 class DiracBiquadFilter {
   public:
     static constexpr size_t kBandCount = 7;
@@ -87,6 +94,11 @@ class DiracBiquadFilter {
     // the preamp probe never sees it.
     void SetAttenuationDb(double attenuationDb);
 
+    // Enables the final mid/side widening. `sumDiff` is the width in 0..1; it
+    // is a pure side gain applied after every filter stage, so it never changes
+    // the cascade's per-channel response or group delay.
+    void SetSumDiff(float sumDiff);
+
     void Reset();
 
     // Applies the curve to an interleaved PCM buffer. `input` and `output` may
@@ -108,6 +120,7 @@ class DiracBiquadFilter {
     Biquad stages_[kMaxChannels][kBandCount];
     Biquad signature_[kMaxChannels][kSignatureCount];
     LoudnessTilt tilt_;
+    StereoWidth width_;
     float preampGain_ = 1.0f;
     unsigned channelCount_ = 0;
     bool configured_ = false;

@@ -37,17 +37,25 @@ object DiracBiquadState {
     class Reading(
         val enabled: Boolean,
         val fallback: Boolean,
+        val sumDiff: Float,
         val bandsHalfDb: IntArray,
         val volumeDb: Double,
     )
 
     /** Sends one payload; true only when the daemon accepted it. */
-    fun send(enabled: Boolean, fallback: Boolean, bandsHalfDb: IntArray, volumeDb: Double): Boolean {
+    fun send(
+        enabled: Boolean,
+        fallback: Boolean,
+        sumdiff: Float,
+        bandsHalfDb: IntArray,
+        volumeDb: Double,
+    ): Boolean {
         return try {
             val binder: IBinder = ServiceManager.getService(SERVICE_NAME) ?: return false
             IDiracBiquadState.Stub.asInterface(binder).setState(
                 enabled,
                 fallback,
+                sumdiff,
                 bandsHalfDb,
                 volumeDb,
             )
@@ -70,7 +78,7 @@ object DiracBiquadState {
                 return null
             }
             val bands = service.bandsHalfDb ?: return null
-            Reading(service.enabled, service.fallback, bands, service.volumeDb)
+            Reading(service.enabled, service.fallback, service.sumDiff, bands, service.volumeDb)
         } catch (e: RemoteException) {
             DiracTrace.log(TAG) { "read failed: ${e.message}" }
             null

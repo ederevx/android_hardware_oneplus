@@ -22,6 +22,7 @@
 #include "Biquad.h"
 #include "DiracBiquadTable.h"
 #include "LoudnessTilt.h"
+#include "StereoWidth.h"
 
 namespace {
 
@@ -67,6 +68,10 @@ bool DiracBiquadFilter::Configure(unsigned sampleRateHz, unsigned channelCount,
     // The tilt is rebuilt for the new rate; it is not part of the preamp probe.
     tilt_.Configure(sampleRateHz, channelCount);
 
+    // The mid/side stage is a topology step: a side high-pass and a side gain,
+    // neither of which touches the per-channel response or its peak.
+    width_.Configure(sampleRateHz, channelCount);
+
     channelCount_ = channelCount;
     configured_ = true;
     return true;
@@ -82,10 +87,15 @@ void DiracBiquadFilter::Reset() {
         }
     }
     tilt_.Reset();
+    width_.Reset();
 }
 
 void DiracBiquadFilter::SetAttenuationDb(double attenuationDb) {
     tilt_.SetAttenuationDb(attenuationDb);
+}
+
+void DiracBiquadFilter::SetSumDiff(float sumDiff) {
+    width_.SetWidth(sumDiff);
 }
 
 // Static headroom policy: the signature contributes gain too, so the preamp
@@ -174,18 +184,27 @@ void DiracBiquadFilter::Process(const void *input, void *output, size_t frameCou
         return;
     }
 
+    // One frame is staged so the cross-channel fold sees both channels of the
+    // pair before either is written; input and output may still alias because
+    // each staged value is read before its output slot is written.
+    float staged[kMaxChannels];
+
     switch (format) {
         case AUDIO_FORMAT_PCM_FLOAT: {
             const float *in = static_cast<const float *>(input);
             float *out = static_cast<float *>(output);
             for (size_t frame = 0; frame < frameCount; ++frame) {
+                const size_t base = frame * channelCount;
                 for (unsigned ch = 0; ch < channelCount; ++ch) {
-                    const size_t index = frame * channelCount + ch;
-                    float y = ProcessSample(in[index], ch);
+                    staged[ch] = ProcessSample(in[base + ch], ch);
+                }
+                width_.ProcessFrame(staged, channelCount);
+                for (unsigned ch = 0; ch < channelCount; ++ch) {
+                    float y = staged[ch];
                     if (accumulate) {
-                        y += out[index];
+                        y += out[base + ch];
                     }
-                    out[index] = std::fmin(1.0f, std::fmax(-1.0f, y));
+                    out[base + ch] = std::fmin(1.0f, std::fmax(-1.0f, y));
                 }
             }
             break;
@@ -194,14 +213,18 @@ void DiracBiquadFilter::Process(const void *input, void *output, size_t frameCou
             const int16_t *in = static_cast<const int16_t *>(input);
             int16_t *out = static_cast<int16_t *>(output);
             for (size_t frame = 0; frame < frameCount; ++frame) {
+                const size_t base = frame * channelCount;
                 for (unsigned ch = 0; ch < channelCount; ++ch) {
-                    const size_t index = frame * channelCount + ch;
-                    float y = ProcessSample(static_cast<float>(in[index]) / 32768.0f, ch);
+                    staged[ch] = ProcessSample(static_cast<float>(in[base + ch]) / 32768.0f, ch);
+                }
+                width_.ProcessFrame(staged, channelCount);
+                for (unsigned ch = 0; ch < channelCount; ++ch) {
+                    float y = staged[ch];
                     if (accumulate) {
-                        y += static_cast<float>(out[index]) / 32768.0f;
+                        y += static_cast<float>(out[base + ch]) / 32768.0f;
                     }
                     y = std::fmin(1.0f, std::fmax(-1.0f, y));
-                    out[index] = static_cast<int16_t>(std::lround(y * 32767.0f));
+                    out[base + ch] = static_cast<int16_t>(std::lround(y * 32767.0f));
                 }
             }
             break;

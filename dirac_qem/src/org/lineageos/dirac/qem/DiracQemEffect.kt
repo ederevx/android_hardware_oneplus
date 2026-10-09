@@ -32,6 +32,10 @@ import java.util.concurrent.atomic.AtomicReference
  * enable, 0x12D35 EQ enable, 0x12D36 28-byte coefficients, 0x12D67 sound-field
  * enable, plus the headset-only 0x12D03 / 0x12D04 filter select -- is written to
  * whichever module the active route names.
+ *
+ * Frames are sent only while the Dirac DSP voices the live sink. On a sink it
+ * does not voice no Dirac topology has a live stream, so the whole ADSP leg is
+ * skipped there and the host effect carries the state instead.
  */
 object DiracQemEffect {
     private const val TAG_BANDS = "DiracQemBands"
@@ -44,13 +48,13 @@ object DiracQemEffect {
     private const val SND_DEVICE_OUT_SPEAKER = 2
 
     /**
-     * Wired headset sound device. The headset stream reports acdb_dev_id 10,
-     * but the frame is addressed with cal_snddevid 9 -- the snd_device the HAL
-     * resolves for the wired headset -- while cal_devid stays 0. This is the
+     * Speaker sound device. Nothing names a sound device for the wired route:
+     * the headset stream reports acdb_dev_id 10, and a frame that claims 9 is
+     * refused with "active device/stream not found", so that route sends
+     * cal_devid=0 alone and lets the HAL resolve the output. This is the
      * selector the headset topology 0x10012D01 accepts; addressing it with the
      * speaker module 0x12D00 is rejected outright.
      */
-    private const val SND_DEVICE_OUT_HEADSET = 9
 
     private const val SCALAR_TONAL_BALANCE = 3
     private const val SCALAR_LOUDNESS = 4
@@ -80,7 +84,7 @@ object DiracQemEffect {
      * headset route.
      */
     fun pushBands(context: Context) {
-        if (!DiracState.isEnabled(context)) {
+        if (!DiracState.isEnabled(context) || !adspVoiced(context)) {
             return
         }
         val appContext = context.applicationContext ?: context
@@ -123,14 +127,30 @@ object DiracQemEffect {
 
     /** Pushes the stored movie-mode scalar from the owned state. */
     fun setMovie(context: Context) {
+        if (!adspVoiced(context)) {
+            return
+        }
         send(context, SCALAR_TONAL_BALANCE, QemProtocol.scalarPayload(
             SCALAR_TONAL_BALANCE, if (DiracState.isMovie(context)) MOVIE_TONAL_BALANCE else DEFAULT_TONAL_BALANCE))
     }
 
-    /** Pushes the stored Bluetooth-connected loudness scalar from the owned state. */
-    fun setBluetooth(context: Context) {
-        send(context, SCALAR_LOUDNESS, QemProtocol.scalarPayload(
-            SCALAR_LOUDNESS, if (DiracState.isBluetoothConnected(context)) BT_LOUDNESS else DEFAULT_LOUDNESS))
+    /** Pushes the stored Sum/Diff stereo width for the live route. */
+    fun setSumDiff(context: Context) {
+        if (!adspVoiced(context)) {
+            return
+        }
+        sendSumDiff(context, DiracState.output(context))
+    }
+
+    /**
+     * The Sum/Diff frame is the one param the ACDB LUT does not carry, so it is
+     * sent raw: cal_caltype=0 makes the ADM reject it with ADSP_EBADPARAM from
+     * ADM_CMD_SET_PP_PARAMS, while cal_caltype=1 bypasses the lookup and the
+     * same frame is accepted. Every other frame stays on the ACDB path.
+     */
+    private fun sendSumDiff(context: Context, output: Int) {
+        sendOp(context, output, QemProtocol.PARAM_SUMDIFF,
+            QemProtocol.floatPayload(DiracState.sumDiff(context)), QemProtocol.CALTYPE_RAW)
     }
 
     private fun send(context: Context, key: Int, payload: ByteArray) {
@@ -154,9 +174,17 @@ object DiracQemEffect {
         // The single load step: the stored values are read before anything is
         // composed or published.
         DiracState.load(context)
-        // A pass is where the route is re-read; the band path then reuses it.
-        val route = DiracState.resolveRoute(context, true)
+        // A pass is where the live sink is re-read and a page that is open is
+        // told it changed; the frames below then reuse the route it resolves.
+        DiracState.refreshRoute(context)
+        val route = DiracState.output(context)
         DiracState.publish(context)
+        // On the host-owned sink no Dirac topology has a live stream, so both
+        // the enable set and the disable frames could only fail there. The host
+        // effect carries the state on that sink, and was published above.
+        if (!adspVoiced(context)) {
+            return
+        }
         val applied = DiracState.appliedRoutes(context)
         if (!DiracState.isEnabled(context)) {
             // Clear every route the app enabled. An empty record means the app
@@ -194,6 +222,14 @@ object DiracQemEffect {
         sendOp(context, output, QemProtocol.PARAM_EQ_ENABLE, QemProtocol.intPayload(1))
         sendOp(context, output, QemProtocol.PARAM_EQ_BANDS, QemProtocol.eqBandsPayload(bands))
         sendOp(context, output, QemProtocol.PARAM_SFX_ENABLE, QemProtocol.intPayload(1))
+        sendSumDiff(context, output)
+        // The loudness scalar is derived from the live sink, so it rides the
+        // pass instead of an A2DP broadcast of its own: the value the DSP holds
+        // then always matches the sink, including the return to the default
+        // loudness when Bluetooth goes away.
+        sendOp(context, output, QemProtocol.PARAM_SCALAR_BASE + SCALAR_LOUDNESS,
+            QemProtocol.scalarPayload(SCALAR_LOUDNESS,
+                if (DiracState.isBluetoothConnected(context)) BT_LOUDNESS else DEFAULT_LOUDNESS))
         if (output == DiracState.OUTPUT_EXTERNAL) {
             sendOp(context, output, QemProtocol.PARAM_HDSOUND_ENABLE, QemProtocol.intPayload(1))
             sendOp(context, output, QemProtocol.PARAM_HDSOUND_FILTERIDX,
@@ -201,17 +237,33 @@ object DiracQemEffect {
         }
     }
 
-    private fun sendOp(context: Context, output: Int, param: Int, payload: ByteArray) {
+    private fun sendOp(
+        context: Context,
+        output: Int,
+        param: Int,
+        payload: ByteArray,
+        calType: Int = QemProtocol.CALTYPE_ACDB,
+    ) {
         QemTransport(context).send(
             moduleFor(output), topoFor(output), devicesFor(output), param, payload,
-            sndDevIdFor(output))
+            sndDevIdFor(output), calType = calType)
     }
 
     private fun sendDisable(context: Context, output: Int) {
         QemTransport(context).send(
             moduleFor(output), topoFor(output), devicesFor(output),
             QemProtocol.PARAM_ENABLE, QemProtocol.intPayload(0), sndDevIdFor(output))
+        sendOp(context, output, QemProtocol.PARAM_SUMDIFF,
+            QemProtocol.floatPayload(QemProtocol.SUMDIFF_OFF), QemProtocol.CALTYPE_RAW)
     }
+
+    /**
+     * Whether the ADSP leg can run at all: the live sink has to be one the Dirac
+     * DSP voices. On a sink it does not voice, every Dirac topology has no live
+     * stream, so a frame can only fail; [apply] publishes the host effect's
+     * state before this decides anything.
+     */
+    private fun adspVoiced(context: Context): Boolean = DiracState.sink(context).dspVoiced
 
     private fun routeBit(output: Int): Int = 1 shl output
 
@@ -222,14 +274,23 @@ object DiracQemEffect {
         if (output == DiracState.OUTPUT_EXTERNAL) QemProtocol.TOPO_EXTERNAL else QemProtocol.TOPO_INTERNAL
 
     /**
-     * The headset frame carries an explicit cal_snddevid, so one pass is
-     * enough; the speaker keeps its single-element device list.
+     * The wired route carries no cal_snddevid, so it needs one pass; the
+     * speaker keeps its single-element device list.
      */
     private fun devicesFor(output: Int): IntArray =
         if (output == DiracState.OUTPUT_EXTERNAL) intArrayOf(0) else QemProtocol.DEVICES_INTERNAL
 
+    /**
+     * Which snd_device a frame names, if any. The wired route names none:
+     * [devicesFor] already sends cal_devid=0 and lets the HAL resolve the
+     * output itself, and an explicit cal_snddevid that disagrees with the live
+     * stream's acdb device (9 against the wired route's 10) is refused with
+     * "active device/stream not found" - which was every wired frame this app
+     * sent. The speaker keeps its snd_device, because the HAL's own output
+     * routing does not have to resolve AUDIO_DEVICE_OUT_SPEAKER to that one.
+     */
     private fun sndDevIdFor(output: Int): Int =
-        if (output == DiracState.OUTPUT_EXTERNAL) SND_DEVICE_OUT_HEADSET else SND_DEVICE_OUT_SPEAKER
+        if (output == DiracState.OUTPUT_EXTERNAL) 0 else SND_DEVICE_OUT_SPEAKER
 
     /**
      * DEV PROBE: send a single Dirac calibration frame with an explicit
