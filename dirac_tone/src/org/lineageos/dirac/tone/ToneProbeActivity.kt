@@ -55,8 +55,8 @@ private fun parseEntries(raw: String?): List<Entry> = raw.orEmpty()
         )
     }
 
-/** Accepts decimal or 0x-prefixed hex. */
-private fun parseNumber(raw: String?): Int? = raw?.trim()?.let {
+/** Accepts decimal or 0x-prefixed hex. Shared by the probe activities. */
+internal fun parseNumber(raw: String?): Int? = raw?.trim()?.let {
     runCatching {
         if (it.startsWith("0x", ignoreCase = true)) {
             it.substring(2).toLong(16).toInt()
