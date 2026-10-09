@@ -25,7 +25,7 @@ import kotlin.math.roundToInt
 /**
  * The one owner of the Dirac app state.
  *
- * Every published variable -- the enable flag, the A2DP fallback opt-in, the
+ * Every published variable -- the enable flag, the biquad fallback opt-in, the
  * Sum/Diff width, the seven band gains, the stream attenuation, the resolved
  * route and the HDSOUND filter index -- lives here and is read and written only
  * through this class.
@@ -43,7 +43,7 @@ object DiracState {
      * The two routes the ADSP frame family addresses: the internal module the
      * speaker route uses and the external one the wired jack uses. They are not
      * the live output -- [sink] is -- because every sink that is not the wired
-     * jack, A2DP included, addresses the internal module.
+     * jack, Bluetooth and the other host outputs included, addresses the internal module.
      */
     const val OUTPUT_INTERNAL = 0
     const val OUTPUT_EXTERNAL = 1
@@ -61,7 +61,9 @@ object DiracState {
     private const val KEY_CUSTOM = "custom"
     private const val KEY_MODEL = "model"
     private const val KEY_MOVIE = "movie"
-    private const val KEY_A2DP_FALLBACK = "a2dp_fallback"
+    // The stored key keeps its historical spelling: renaming it would silently
+    // reset the switch on every existing install.
+    private const val KEY_BIQUAD_FALLBACK = "a2dp_fallback"
     private const val KEY_SUMDIFF = "sumdiff"
 
     /**
@@ -78,7 +80,7 @@ object DiracState {
 
     private var ready = false
     private var enabled = false
-    private var a2dpFallback = false
+    private var biquadFallback = false
     private var sumdiff = 0.0f
     private var style = DiracPresets.STYLE_NONE
     private var model = 0
@@ -114,20 +116,20 @@ object DiracState {
     /** One complete published payload; the unit [publish] dedupes on. */
     class Snapshot(
         val enabled: Boolean,
-        val a2dpFallback: Boolean,
+        val biquadFallback: Boolean,
         val sumdiff: Float,
         val bandsHalfDb: IntArray,
         val volumeDb: Double,
     ) {
         fun sameAs(other: Snapshot?): Boolean = other != null &&
             enabled == other.enabled &&
-            a2dpFallback == other.a2dpFallback &&
+            biquadFallback == other.biquadFallback &&
             sumdiff == other.sumdiff &&
             volumeDb == other.volumeDb &&
             bandsHalfDb.contentEquals(other.bandsHalfDb)
 
         override fun toString(): String =
-            "enabled=$enabled fallback=$a2dpFallback sumdiff=$sumdiff volume_db=$volumeDb " +
+            "enabled=$enabled fallback=$biquadFallback sumdiff=$sumdiff volume_db=$volumeDb " +
                 "bands=${bandsHalfDb.joinToString(";")}"
     }
 
@@ -149,7 +151,7 @@ object DiracState {
         }
         val p = prefs(context)
         enabled = p.getBoolean(KEY_ENABLED, false)
-        a2dpFallback = p.getBoolean(KEY_A2DP_FALLBACK, false)
+        biquadFallback = p.getBoolean(KEY_BIQUAD_FALLBACK, false)
         sumdiff = p.getFloat(KEY_SUMDIFF, SUMDIFF_DEFAULT)
         style = p.getInt(KEY_STYLE, DiracPresets.STYLE_NONE)
         model = p.getInt(KEY_MODEL, 0)
@@ -166,11 +168,12 @@ object DiracState {
     }
 
     /**
-     * Whether this build ships the A2DP software-fallback switch. This is a
+     * Whether this build ships the software-fallback switch for the host outputs.
+     * This is a
      * build-time config resource, never a library probe: a product built
      * without the dirac_biquad effect has no switch and no propagation at all.
      */
-    fun isA2dpFallbackAvailable(context: Context): Boolean =
+    fun isBiquadFallbackAvailable(context: Context): Boolean =
         context.resources.getBoolean(R.bool.config_dirac_biquad_fallback_available)
 
     fun isEnabled(context: Context): Boolean {
@@ -184,15 +187,15 @@ object DiracState {
         prefs(context).edit().putBoolean(KEY_ENABLED, value).apply()
     }
 
-    fun isA2dpFallbackEnabled(context: Context): Boolean {
+    fun isBiquadFallbackEnabled(context: Context): Boolean {
         ensureLoaded(context)
-        return a2dpFallback
+        return biquadFallback
     }
 
-    fun setA2dpFallback(context: Context, value: Boolean) {
+    fun setBiquadFallback(context: Context, value: Boolean) {
         ensureLoaded(context)
-        a2dpFallback = value
-        prefs(context).edit().putBoolean(KEY_A2DP_FALLBACK, value).apply()
+        biquadFallback = value
+        prefs(context).edit().putBoolean(KEY_BIQUAD_FALLBACK, value).apply()
     }
 
     fun sumDiff(context: Context): Float {
@@ -279,9 +282,12 @@ object DiracState {
         !sink(context).dspVoiced && isBiquadFallbackAvailable(context) &&
             isBiquadFallbackEnabled(context)
 
-    /** Whether the live sink is the Bluetooth one, which has its own loudness. */
+    /**
+     * Whether the live sink is Bluetooth, which carries its own loudness scalar;
+     * a host sink that is not Bluetooth gets the default one.
+     */
     fun isBluetoothConnected(context: Context): Boolean =
-        sink(context) == DiracRouteResolver.Sink.BLUETOOTH
+        DiracRouteResolver.bluetoothSinkAttached(context)
 
     /** Whether the wired jack is the live sink, the one the headset model drives. */
     fun isWiredSink(context: Context): Boolean =
@@ -325,7 +331,7 @@ object DiracState {
 
     /**
      * Registers an in-process observer that is called whenever the resolved
-     * output route changes, a jack plug and an A2DP connection alike. It exists
+     * output route changes, a jack plug and a Bluetooth connection alike. It exists
      * so a live settings page can follow the output without owning a second
      * HEADSET_PLUG or Bluetooth registration.
      */
@@ -339,7 +345,7 @@ object DiracState {
 
     /**
      * Re-reads the live sink and tells the observers when it changed, so a page
-     * that is already open follows a jack plug or an A2DP connection. It is
+     * that is already open follows a jack plug or a Bluetooth connection. It is
      * called on every pass, so nothing has to remember what the route was.
      */
     fun refreshRoute(context: Context) {
@@ -424,7 +430,7 @@ object DiracState {
      * config file and never makes the effect reload it.
      */
     fun publish(context: Context): Boolean {
-        if (!isA2dpFallbackAvailable(context)) {
+        if (!isBiquadFallbackAvailable(context)) {
             return false
         }
         if (!ready) {
@@ -435,7 +441,7 @@ object DiracState {
         if (next.sameAs(lastPublished)) {
             return false
         }
-        if (!DiracBiquadState.send(next.enabled, next.a2dpFallback, next.sumdiff, next.bandsHalfDb, next.volumeDb)) {
+        if (!DiracBiquadState.send(next.enabled, next.biquadFallback, next.sumdiff, next.bandsHalfDb, next.volumeDb)) {
             return false
         }
         lastPublished = next
@@ -470,7 +476,7 @@ object DiracState {
 
     private fun compose(context: Context): Snapshot = Snapshot(
         enabled,
-        a2dpFallback,
+        biquadFallback,
         sumdiff,
         currentBands(context).copyOf(),
         attenuationDb,
