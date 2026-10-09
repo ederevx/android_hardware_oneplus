@@ -18,7 +18,7 @@
 
 #include "Biquad.h"
 
-// Volume-linked loudness contour for the A2DP effect.
+// Volume-linked loudness contour for the host leg.
 //
 // The ISO 226 equal-loudness contours are level dependent: below the 80-phon
 // reference the ear loses low- and high-frequency sensitivity faster than the

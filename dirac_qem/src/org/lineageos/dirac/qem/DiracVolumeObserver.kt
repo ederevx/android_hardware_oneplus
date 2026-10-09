@@ -42,7 +42,7 @@ import android.provider.Settings
  * query publishes the unknown sentinel, never 0.
  *
  * Lifecycle: [start] registers and [stop] unregisters; both are idempotent. The
- * observer does nothing unless the build ships the A2DP fallback, and it is
+ * observer does nothing unless the build ships the host-output fallback, and it is
  * throttled so a volume ramp cannot flood the state file with writes.
  */
 class DiracVolumeObserver(context: Context) {
@@ -78,7 +78,7 @@ class DiracVolumeObserver(context: Context) {
 
     fun start() {
         if (started || audioManager == null ||
-            !DiracState.isA2dpFallbackAvailable(appContext)) {
+            !DiracState.isBiquadFallbackAvailable(appContext)) {
             return
         }
         started = true
