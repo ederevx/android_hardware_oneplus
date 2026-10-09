@@ -20,13 +20,15 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
 import java.util.concurrent.CopyOnWriteArraySet
+import kotlin.math.roundToInt
 
 /**
  * The one owner of the Dirac app state.
  *
  * Every published variable -- the enable flag, the A2DP fallback opt-in, the
- * seven band gains, the stream attenuation, the resolved route and the HDSOUND
- * filter index -- lives here and is read and written only through this class.
+ * Sum/Diff width, the seven band gains, the stream attenuation, the resolved
+ * route and the HDSOUND filter index -- lives here and is read and written only
+ * through this class.
  * It keeps the authoritative snapshot and the last payload handed to the
  * daemon, so [publish] is a no-op while the state is unchanged and opening the
  * settings app cannot rewrite an identical config. [assertState] reads the
@@ -57,6 +59,7 @@ object DiracState {
     private const val KEY_MODEL = "model"
     private const val KEY_MOVIE = "movie"
     private const val KEY_A2DP_FALLBACK = "a2dp_fallback"
+    private const val KEY_SUMDIFF = "sumdiff"
 
     /** The loudness law is flat past this; it only bounds a mute. */
     private const val MAX_VOLUME_DB = 120.0
@@ -66,6 +69,7 @@ object DiracState {
     private var ready = false
     private var enabled = false
     private var a2dpFallback = false
+    private var sumdiff = 0.0f
     private var style = DiracPresets.STYLE_NONE
     private var model = 0
     private var movie = false
@@ -96,17 +100,19 @@ object DiracState {
     class Snapshot(
         val enabled: Boolean,
         val a2dpFallback: Boolean,
+        val sumdiff: Float,
         val bandsHalfDb: IntArray,
         val volumeDb: Double,
     ) {
         fun sameAs(other: Snapshot?): Boolean = other != null &&
             enabled == other.enabled &&
             a2dpFallback == other.a2dpFallback &&
+            sumdiff == other.sumdiff &&
             volumeDb == other.volumeDb &&
             bandsHalfDb.contentEquals(other.bandsHalfDb)
 
         override fun toString(): String =
-            "enabled=$enabled fallback=$a2dpFallback volume_db=$volumeDb " +
+            "enabled=$enabled fallback=$a2dpFallback sumdiff=$sumdiff volume_db=$volumeDb " +
                 "bands=${bandsHalfDb.joinToString(";")}"
     }
 
@@ -129,6 +135,7 @@ object DiracState {
         val p = prefs(context)
         enabled = p.getBoolean(KEY_ENABLED, false)
         a2dpFallback = p.getBoolean(KEY_A2DP_FALLBACK, false)
+        sumdiff = p.getFloat(KEY_SUMDIFF, 0.0f)
         style = p.getInt(KEY_STYLE, DiracPresets.STYLE_NONE)
         model = p.getInt(KEY_MODEL, 0)
         movie = p.getBoolean(KEY_MOVIE, false)
@@ -171,6 +178,35 @@ object DiracState {
         ensureLoaded(context)
         a2dpFallback = value
         prefs(context).edit().putBoolean(KEY_A2DP_FALLBACK, value).apply()
+    }
+
+    fun sumDiff(context: Context): Float {
+        ensureLoaded(context)
+        return sumdiff
+    }
+
+    /**
+     * Stages the width in the owned state without persisting or publishing it,
+     * so a drag repaints from it and the HAL is touched only at the settle. The
+     * value is quantized to the thousandth the conf stores, so [assertState]
+     * reads back exactly the float that was published.
+     */
+    fun setSumDiff(context: Context, value: Float): Boolean {
+        ensureLoaded(context)
+        val quantized =
+            (value.coerceIn(0.0f, 1.0f) * SUMDIFF_STEPS).roundToInt() / SUMDIFF_STEPS
+        if (quantized == sumdiff) {
+            return false
+        }
+        sumdiff = quantized
+        return true
+    }
+
+    /** Writes the settled width once and publishes it. */
+    fun persistSumDiff(context: Context) {
+        ensureLoaded(context)
+        prefs(context).edit().putFloat(KEY_SUMDIFF, sumdiff).apply()
+        publish(context)
     }
 
     fun style(context: Context): Int {
@@ -364,7 +400,7 @@ object DiracState {
         if (next.sameAs(lastPublished)) {
             return false
         }
-        if (!DiracBiquadState.send(next.enabled, next.a2dpFallback, next.bandsHalfDb, next.volumeDb)) {
+        if (!DiracBiquadState.send(next.enabled, next.a2dpFallback, next.sumdiff, next.bandsHalfDb, next.volumeDb)) {
             return false
         }
         lastPublished = next
@@ -388,7 +424,8 @@ object DiracState {
             Log.w(TAG, "daemon state unavailable; cannot verify [$published]")
             return true
         }
-        val reading = Snapshot(echoed.enabled, echoed.fallback, echoed.bandsHalfDb, echoed.volumeDb)
+        val reading =
+            Snapshot(echoed.enabled, echoed.fallback, echoed.sumDiff, echoed.bandsHalfDb, echoed.volumeDb)
         if (reading.sameAs(published)) {
             return true
         }
@@ -399,10 +436,14 @@ object DiracState {
     private fun compose(context: Context): Snapshot = Snapshot(
         enabled,
         a2dpFallback,
+        sumdiff,
         currentBands(context).copyOf(),
         attenuationDb,
     )
 
     private fun sanitizeVolumeDb(value: Double): Double =
         if (value.isFinite() && value > 0.0) value.coerceAtMost(MAX_VOLUME_DB) else UNKNOWN_VOLUME_DB
+
+    /** The thousand-step grid the conf's %.3f round-trips the width on. */
+    private const val SUMDIFF_STEPS = 1000f
 }
