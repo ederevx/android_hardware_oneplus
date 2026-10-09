@@ -31,6 +31,16 @@ object QemProtocol {
     const val TOPO_EXTERNAL = 0x10012D01
 
     val DEVICES_INTERNAL = intArrayOf(2)
+    /**
+     * The application types every push covers, in full.
+     *
+     * A stream's app type is chosen on the player/HAL side - 0x11130 (69936) is
+     * what a music stream registers, 0x11134 (69940) is the other case - and this
+     * process cannot read which one is live, so it covers both and lets the ADSP
+     * loader reject whichever is not registered. Those rejections are the
+     * "active device/stream not found" lines in the ACDB log; narrowing this list
+     * would silence them at the price of never voicing the other app type.
+     */
     val APP_TYPES = intArrayOf(69936, 69940)
     val SAMPLE_RATES = intArrayOf(44100, 48000, 96000, 192000)
     val PERSIST = intArrayOf(0, 1)

@@ -40,7 +40,7 @@ import android.util.Log
  * and getDevices(GET_DEVICES_OUTPUTS) both report the wired headset with
  * nothing in the jack; the sticky HEADSET_PLUG broadcast that AudioService's
  * AudioDeviceInventory sends on every wired connect and disconnect is the true
- * jack state. The Bluetooth sink is the opposite case: an A2DP output device
+ * jack state. A host sink is the opposite case: a Bluetooth output device
  * exists only while a device is connected, so its presence in that same list is
  * the connection signal, while the profile state would need a second source --
  * and its broadcast is not delivered to a process that was not running.
@@ -67,8 +67,14 @@ object DiracRouteResolver {
         /** The wired jack. */
         WIRED,
 
-        /** A2DP, and any other sink the Dirac DSP does not voice. */
-        BLUETOOTH;
+        /**
+         * Every sink the Dirac DSP does not voice. Bluetooth A2DP is the one this
+         * platform reports honestly: its output device appears only while
+         * connected, unlike the wired sinks above, which the policy lists whether
+         * or not anything is plugged. The other host outputs - USB, the remote
+         * submix - are not detected yet, and classify as SPEAKER.
+         */
+        HOST;
 
         /**
          * Whether the Dirac DSP voices this sink at all, so the ADSP frames can
@@ -77,23 +83,23 @@ object DiracRouteResolver {
          * does not gate, and on those same sinks no Dirac topology has a live
          * stream for a frame to reach.
          */
-        val dspVoiced: Boolean get() = this != BLUETOOTH
+        val dspVoiced: Boolean get() = this != HOST
     }
 
     /** Reads the live sink. */
     fun sink(context: Context): Sink {
         val plugged = wiredPlugged(context)
-        val bluetooth = !plugged && bluetoothAttached(context)
+        val host = !plugged && bluetoothSinkAttached(context)
         val sink = when {
             plugged -> Sink.WIRED
-            bluetooth -> Sink.BLUETOOTH
+            host -> Sink.HOST
             else -> Sink.SPEAKER
         }
         // Information, not debug: this is the decision the settings row and the
         // HAL push both follow, and it is cheap only on a route event.
         Log.i(
             TAG,
-            "sink=$sink jack_plugged=$plugged a2dp_attached=$bluetooth " +
+            "sink=$sink jack_plugged=$plugged bluetooth_sink=$host " +
                 "wired_available=[${wiredCandidates(context)}]",
         )
         return sink
@@ -114,10 +120,11 @@ object DiracRouteResolver {
     }
 
     /**
-     * Whether an A2DP sink is attached. Its output device is created on
-     * connection and torn down on disconnect, unlike the wired sinks above.
+     * Whether a Bluetooth A2DP sink is attached: the one host output this
+     * platform reports honestly. Its device is created on connection and torn
+     * down on disconnect, unlike the wired sinks above.
      */
-    private fun bluetoothAttached(context: Context): Boolean =
+    fun bluetoothSinkAttached(context: Context): Boolean =
         outputDevices(context).any { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP }
 
     private fun outputDevices(context: Context): List<AudioDeviceInfo> =

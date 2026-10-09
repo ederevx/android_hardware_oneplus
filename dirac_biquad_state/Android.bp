@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-// The one writer of the A2DP fallback config file. A system-side daemon, so it
+// The one writer of the host-output fallback config file. A system-side daemon, so it
 // registers with the system servicemanager and stays alive for binder calls.
 cc_binary {
     name: "dirac_biquad_state",

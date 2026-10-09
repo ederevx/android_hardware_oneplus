@@ -19,6 +19,7 @@ package org.lineageos.dirac.qem
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 
 /**
  * DEV PROBE, not part of the shipped feature.
@@ -33,9 +34,14 @@ import android.content.Intent
  *
  * Trigger, with an offload music stream already playing:
  *
- *   adb shell am broadcast -a org.lineageos.dirac.qem.PROBE \
+ *   adb shell am broadcast -n org.lineageos.dirac.qem/.DiracProbeReceiver \
+ *       -a org.lineageos.dirac.qem.PROBE \
  *       --es topos "0x10312,0x10313,0x10314,0x11000000,0x11000001,0x10012d00,0x1025e" \
- *       --ei apptype 69936 --ei rate 48000 --ei output 0
+ *       --ei apptype 69936 --ei rate 48000 --ei output 0 --receiver-foreground
+ *
+ * The explicit component is required: a manifest-declared receiver does not get
+ * an implicit broadcast on this platform, so "-a" alone enqueues with no
+ * matching receiver and nothing runs.
  *
  * Extras: topos (comma separated, hex or decimal, required), apptype (default
  * 69936), rate (default 48000), output (0 internal / 1 external, default is the
@@ -67,6 +73,9 @@ class DiracProbeReceiver : BroadcastReceiver() {
         Thread {
             try {
                 topos.forEachIndexed { index, topo ->
+                    // Logged BEFORE the frame, so the loader's answers line up one
+                    // to one with the candidates that produced them.
+                    Log.i(TAG, "probe topo=$topo apptype=$appType rate=$rate output=$output")
                     DiracQemEffect.probeCal(context, output, topo, appType, rate)
                     if (index != topos.lastIndex) {
                         Thread.sleep(GAP_MS)

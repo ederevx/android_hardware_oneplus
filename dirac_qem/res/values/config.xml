@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!--
-      Whether the settings page offers the A2DP software-fallback switch.
+      Whether the settings page offers the software-fallback switch for the host
+     outputs, i.e. every output the ADSP Dirac topology does not voice.
 
       This is a build-time flag, not a runtime library probe: the device build
       overlays it to true only when the dirac_biquad effect is part of the
