@@ -67,9 +67,10 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
         val context = requireContext()
 
         findPreference<MainSwitchPreference>(KEY_ENABLED)?.let { preference ->
-            preference.isChecked = DiracQemEffect.isEnabled(context)
+            preference.isChecked = DiracState.isEnabled(context)
             preference.setOnPreferenceChangeListener { _, value ->
-                DiracQemEffect.setEnabled(context, value as Boolean)
+                DiracState.setEnabled(context, value as Boolean)
+                DiracQemEffect.apply(context)
                 true
             }
         }
@@ -79,30 +80,33 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
         // preference, no listener, and nothing that would ever be pushed.
         val fallback = findPreference<SwitchPreferenceCompat>(KEY_A2DP_FALLBACK)
         if (fallback != null) {
-            if (!DiracQemEffect.isA2dpFallbackAvailable(context)) {
+            if (!DiracState.isA2dpFallbackAvailable(context)) {
                 preferenceScreen.removePreference(fallback)
             } else {
-                fallback.isChecked = DiracQemEffect.isA2dpFallbackEnabled(context)
+                fallback.isChecked = DiracState.isA2dpFallbackEnabled(context)
                 fallback.setOnPreferenceChangeListener { _, value ->
-                    DiracQemEffect.setA2dpFallback(context, value as Boolean)
+                    DiracState.setA2dpFallback(context, value as Boolean)
+                    DiracQemEffect.apply(context)
                     true
                 }
             }
         }
 
         findPreference<ListPreference>(KEY_MODEL)?.let { preference ->
-            preference.value = DiracQemEffect.model(context).toString()
+            preference.value = DiracState.model(context).toString()
             preference.setOnPreferenceChangeListener { _, value ->
-                DiracQemEffect.setModel(context, (value as String).toInt())
+                DiracState.setModel(context, (value as String).toInt())
+                DiracQemEffect.apply(context)
                 true
             }
         }
 
         stylePreference = findPreference<ListPreference>(KEY_STYLE)?.also { preference ->
-            preference.value = DiracQemEffect.style(context).toString()
+            preference.value = DiracState.style(context).toString()
             preference.setOnPreferenceChangeListener { _, value ->
-                DiracQemEffect.setStyle(context, (value as String).toInt())
+                DiracState.setStyle(context, (value as String).toInt())
                 refreshBands()
+                DiracQemEffect.apply(context)
                 true
             }
         }

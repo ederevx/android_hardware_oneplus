@@ -34,6 +34,8 @@ class DiracRouteService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        // The single load step for the process that owns the registration.
+        DiracState.load(this)
         // The observer needs an attached context, so it is built here and not
         // in the constructor, where this would still be unattached.
         volumeObserver = DiracVolumeObserver(this)

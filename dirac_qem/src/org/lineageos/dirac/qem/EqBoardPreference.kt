@@ -30,8 +30,8 @@ import com.android.settingslib.widget.NormalPaddingMixin
 /**
  * The inline equalizer board: one [VerticalSlider] per Dirac band with the
  * current gain above it and the band label below it. Every slider reads and
- * writes the engine's one band array, so the board keeps no band state of its
- * own and a rebind simply repaints from the engine.
+ * writes the owned band array, so the board keeps no band state of its own and
+ * a rebind simply repaints from it.
  */
 class EqBoardPreference @JvmOverloads constructor(
     context: Context,
@@ -109,9 +109,9 @@ class EqBoardPreference @JvmOverloads constructor(
         }
     }
 
-    /** Repaints the bars from the engine's array and relabels them. */
+    /** Repaints the bars from the owned array and relabels them. */
     fun refresh() {
-        val bands = DiracQemEffect.currentBands(context)
+        val bands = DiracState.currentBands(context)
         sliders.forEachIndexed { index, slider ->
             slider.invalidate()
             valueLabels.getOrNull(index)?.text =

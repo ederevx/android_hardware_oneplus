@@ -53,7 +53,6 @@ class DiracVolumeObserver(context: Context) {
     private var started = false
     private var lastPublishMs = 0L
     private var publishScheduled = false
-    private var lastAttenuationDb = Double.NaN
 
     private val volumeObserver = object : ContentObserver(handler) {
         override fun onChange(selfChange: Boolean) {
@@ -79,7 +78,7 @@ class DiracVolumeObserver(context: Context) {
 
     fun start() {
         if (started || audioManager == null ||
-            !DiracQemEffect.isA2dpFallbackAvailable(appContext)) {
+            !DiracState.isA2dpFallbackAvailable(appContext)) {
             return
         }
         started = true
@@ -113,12 +112,9 @@ class DiracVolumeObserver(context: Context) {
     }
 
     private fun publish() {
-        val attenuationDb = currentAttenuationDb() ?: DiracBiquadState.UNKNOWN_VOLUME_DB
-        if (attenuationDb == lastAttenuationDb) {
-            return
-        }
-        lastAttenuationDb = attenuationDb
-        DiracBiquadState.publish(appContext, attenuationDb)
+        val attenuationDb = currentAttenuationDb() ?: DiracState.UNKNOWN_VOLUME_DB
+        // The owner dedupes, so an unchanged attenuation costs nothing.
+        DiracState.setVolumeDb(appContext, attenuationDb)
     }
 
     /**
