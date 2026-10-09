@@ -261,7 +261,29 @@ object DiracState {
 
     fun setBluetooth(context: Context, value: Boolean) {
         ensureLoaded(context)
+        if (bluetoothConnected == value) {
+            return
+        }
         bluetoothConnected = value
+        // An A2DP connection moves the output between the DSP and the host
+        // fallback, so a live page has to re-read it like a jack change.
+        routeListeners.forEach { it() }
+    }
+
+    /**
+     * Whether the current output is one the Dirac DSP voices, so the host
+     * StereoWidth stage never runs there: the biquad effect gates itself off for
+     * speaker, wired headset, wired headphone and line, and the widening on
+     * those routes is the DSP's. The remaining outputs -- A2DP and the other
+     * non-DSP routes -- are where the host effect owns it instead.
+     *
+     * The app cannot read the effect's own device, so this composes the two
+     * signals it owns: a plugged jack is the external DSP output, and an A2DP
+     * connection is the non-DSP one; with neither, the output is the speaker.
+     */
+    fun isWideningDspHandled(context: Context): Boolean {
+        ensureLoaded(context)
+        return output(context) == OUTPUT_EXTERNAL || !bluetoothConnected
     }
 
     fun appliedRoutes(context: Context): Int {
@@ -301,8 +323,9 @@ object DiracState {
 
     /**
      * Registers an in-process observer that is called whenever the resolved
-     * route changes. It exists so a live settings page can follow a plug
-     * without owning a second HEADSET_PLUG registration.
+     * output route changes, a jack plug and an A2DP connection alike. It exists
+     * so a live settings page can follow the output without owning a second
+     * HEADSET_PLUG or Bluetooth registration.
      */
     fun addRouteListener(listener: () -> Unit) {
         routeListeners.add(listener)

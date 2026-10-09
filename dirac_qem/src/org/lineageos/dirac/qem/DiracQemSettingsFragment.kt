@@ -36,13 +36,14 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
     private var previewPreference: EqPreviewPreference? = null
     private var stylePreference: ListPreference? = null
     private var modelPreference: ListPreference? = null
+    private var sumDiffPreference: SumDiffPreference? = null
 
     /**
-     * Re-evaluates the headset-model row when the route changes while the page
-     * is open. The post drops the update when the view is gone.
+     * Re-evaluates the rows that follow the output when it changes while the
+     * page is open. The post drops the update when the view is gone.
      */
     private val routeListener: () -> Unit = {
-        view?.post { if (isAdded) refreshModelPreference() }
+        view?.post { refreshRouteRows() }
     }
 
     /**
@@ -132,6 +133,7 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
         }
 
         previewPreference = findPreference(KEY_EQ_PREVIEW)
+        sumDiffPreference = findPreference(KEY_SUMDIFF)
 
         findPreference<EqBoardPreference>(KEY_EQ_BOARD)?.let { board ->
             board.onBandChanged = { _, _ ->
@@ -169,6 +171,18 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
     }
 
     /**
+     * Re-reads every row whose state follows the live output: the headset model
+     * and the stereo-width row, which is inert wherever the DSP owns the width.
+     */
+    private fun refreshRouteRows() {
+        if (!isAdded) {
+            return
+        }
+        refreshModelPreference()
+        sumDiffPreference?.refresh()
+    }
+
+    /**
      * The headset-model row is selectable only while the app's own route is the
      * external one -- the same condition under which the effect pushes
      * PARAM_HDSOUND_ENABLE and PARAM_HDSOUND_FILTERIDX. On speaker, Bluetooth
@@ -193,5 +207,6 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
         const val KEY_STYLE = "dirac_style"
         const val KEY_EQ_PREVIEW = "dirac_eq_preview"
         const val KEY_EQ_BOARD = "dirac_eq_board"
+        const val KEY_SUMDIFF = "dirac_sumdiff"
     }
 }

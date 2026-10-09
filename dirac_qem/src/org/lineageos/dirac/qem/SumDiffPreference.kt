@@ -30,13 +30,20 @@ import kotlin.math.roundToInt
  * owned Sum/Diff width, so the preference keeps no width state of its own and a
  * rebind simply repaints from it. The magnitude sits above the bar and the
  * title below it, mirroring an equalizer column laid on its side.
+ *
+ * On an output the DSP voices the row is inert: the host stage the bar drives
+ * never runs there, so the bar and its reset are greyed and the magnitude slot
+ * reads N/A instead of the stored width.
  */
 class SumDiffPreference @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
 ) : Preference(context, attrs), NormalPaddingMixin {
 
+    private var bar: HorizontalSlider? = null
+    private var reset: View? = null
     private var valueLabel: TextView? = null
+    private var dspHandled = false
 
     init {
         isSelectable = false
@@ -45,20 +52,45 @@ class SumDiffPreference @JvmOverloads constructor(
 
     override fun onBindViewHolder(holder: PreferenceViewHolder) {
         super.onBindViewHolder(holder)
-        val bar = holder.itemView.findViewById<HorizontalSlider>(R.id.dirac_sumdiff_slider)
+        bar = holder.itemView.findViewById<HorizontalSlider>(R.id.dirac_sumdiff_slider)
+        reset = holder.itemView.findViewById(R.id.dirac_sumdiff_reset)
         valueLabel = holder.itemView.findViewById(R.id.dirac_sumdiff_value)
         bar?.onValueChanged = { value -> showValue(value) }
-        bar?.invalidate()
-        showValue(DiracState.sumDiff(context))
+        refresh()
         // The trailing button restores the default through the slider, so it
         // inherits the staged settle and the one write that follows it.
-        holder.itemView.findViewById<View>(R.id.dirac_sumdiff_reset)?.setOnClickListener {
-            bar?.reset()
+        reset?.setOnClickListener { bar?.reset() }
+    }
+
+    /**
+     * Re-reads whether the DSP owns the widening and repaints the row. A rebind,
+     * a jack change and an A2DP change all land here; caching the answer keeps
+     * the per-frame relabel from resolving the route again.
+     */
+    fun refresh() {
+        dspHandled = DiracState.isWideningDspHandled(context)
+        bar?.let {
+            it.isEnabled = !dspHandled
+            it.alpha = if (dspHandled) DISABLED_ALPHA else 1f
+            it.invalidate()
         }
+        reset?.let {
+            it.isEnabled = !dspHandled
+            it.alpha = if (dspHandled) DISABLED_ALPHA else 1f
+        }
+        showValue(DiracState.sumDiff(context))
     }
 
     private fun showValue(value: Float) {
-        valueLabel?.text =
+        valueLabel?.text = if (dspHandled) {
+            context.getString(R.string.dirac_sumdiff_na)
+        } else {
             context.getString(R.string.dirac_sumdiff_value, (value * 100f).roundToInt())
+        }
+    }
+
+    private companion object {
+        /** The standard inert look; the bar draws its own colours. */
+        const val DISABLED_ALPHA = 0.38f
     }
 }
