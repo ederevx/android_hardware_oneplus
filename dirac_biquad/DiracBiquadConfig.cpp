@@ -16,6 +16,7 @@
 
 #include "DiracBiquadConfig.h"
 
+#include <errno.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -108,11 +109,12 @@ void DiracBiquadConfig::Fallback(int gainsHalfDb[kBandCount], bool *enabled,
 }
 
 bool DiracBiquadConfig::Load(int gainsHalfDb[kBandCount], bool *enabled, bool *fallback,
-                             double *volumeDb) {
-    int gains[kBandCount];
-    for (size_t i = 0; i < kBandCount; ++i) {
-        gains[i] = kFallbackGains[i];
+                             double *volumeDb, int *errorCode) {
+    if (errorCode != nullptr) {
+        *errorCode = 0;
     }
+
+    int gains[kBandCount] = {};
     bool parsedEnabled = kFallbackEnabled;
     bool parsedFallback = false;
     bool haveEnabled = false;
@@ -121,7 +123,9 @@ bool DiracBiquadConfig::Load(int gainsHalfDb[kBandCount], bool *enabled, bool *f
 
     FILE *file = fopen(kConfigPath, "re");
     if (file == nullptr) {
-        Fallback(gainsHalfDb, enabled, fallback, volumeDb);
+        if (errorCode != nullptr) {
+            *errorCode = errno != 0 ? errno : EIO;
+        }
         return false;
     }
 
@@ -150,8 +154,24 @@ bool DiracBiquadConfig::Load(int gainsHalfDb[kBandCount], bool *enabled, bool *f
             parsedVolumeDb = ParseVolumeDb(value);
         }
     }
+    const int readError = ferror(file);
     fclose(file);
 
+    if (readError != 0) {
+        if (errorCode != nullptr) {
+            *errorCode = readError;
+        }
+        return false;
+    }
+    if (!haveEnabled || !haveBands) {
+        if (errorCode != nullptr) {
+            *errorCode = EINVAL;
+        }
+        return false;
+    }
+
+    // Commit only a fully parsed state; a torn or malformed file leaves the
+    // caller's last good state in place.
     for (size_t i = 0; i < kBandCount; ++i) {
         gainsHalfDb[i] = ClampHalfDb(gains[i]);
     }
@@ -164,5 +184,5 @@ bool DiracBiquadConfig::Load(int gainsHalfDb[kBandCount], bool *enabled, bool *f
     if (volumeDb != nullptr) {
         *volumeDb = parsedVolumeDb;
     }
-    return haveEnabled && haveBands;
+    return true;
 }

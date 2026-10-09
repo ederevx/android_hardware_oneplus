@@ -49,14 +49,15 @@
 // pslimiter/safelimiter/timedomainlimiter chain. The preamp below is a static
 // headroom stand-in for those limiters, not a limiter.
 //
-// Before the user EQ the chain applies a fixed approximation of the module's
-// own flat-EQ signature: the FIR response of usecase/eheadset/defaults/941 in
-// dirac_resource.dar (the Dirac defaults the module loads even when the ACDB
-// user EQ is zeroed). The design parameters live in DiracBiquadTable, one set
+// Before the user EQ the chain applies a fixed approximation of one Dirac
+// signature: the FIR response of the hdsound slot 8 filter
+// usecase/eheadset/hdsound-filters/09-Oneplus-Earphone_General_Bluetooth_
+// 170928v02 in dirac_resource.dar, the OEM "Earphone General Bluetooth"
+// earphone voicing. The design parameters live in DiracBiquadTable, one set
 // per covered rate; that unit owns rate selection and its comment records the
-// target, the objective and the measured per-rate accuracy. It is a neutral
-// approximation of the eheadset default, not the per-model hdsound filter and
-// not the speaker ispeaker/921 voice.
+// target, the objective and the measured per-rate accuracy. Only the filter's
+// FIR magnitude is modelled; its IIR sections and the module's dynamics are
+// not, exactly as for the earlier defaults/941 target.
 //
 // After the signature and the user EQ, a volume-linked loudness tilt contours
 // the output by the stream attenuation the app publishes. It is applied before
@@ -78,7 +79,7 @@ class DiracBiquadFilter {
 
     static constexpr unsigned kMaxChannels = 8;
 
-    // Fixed Dirac flat-EQ signature sections. The parameters come from
+    // Fixed Dirac signature sections. The parameters come from
     // DiracBiquadTable, which selects them for the stream rate; the
     // coefficients are rebuilt for that rate in Configure.
     static constexpr size_t kSignatureCount = DiracBiquadTable::kSectionCount;

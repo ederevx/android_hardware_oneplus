@@ -55,11 +55,11 @@ class DiracProbeReceiver : BroadcastReceiver() {
         val appType = intent.getIntExtra(EXTRA_APPTYPE, DEFAULT_APPTYPE)
         val rate = intent.getIntExtra(EXTRA_RATE, DEFAULT_RATE)
         val requestedOutput = intent.getIntExtra(EXTRA_OUTPUT, OUTPUT_UNSET)
-        val output = if (requestedOutput == DiracQemEffect.OUTPUT_INTERNAL ||
-            requestedOutput == DiracQemEffect.OUTPUT_EXTERNAL) {
+        val output = if (requestedOutput == DiracState.OUTPUT_INTERNAL ||
+            requestedOutput == DiracState.OUTPUT_EXTERNAL) {
             requestedOutput
         } else {
-            DiracQemEffect.output(context)
+            DiracState.output(context)
         }
 
         // The walk takes seconds, so it has to outlive onReceive().
