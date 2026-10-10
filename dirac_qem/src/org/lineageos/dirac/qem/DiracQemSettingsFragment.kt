@@ -84,6 +84,9 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
             preference.setOnPreferenceChangeListener { _, value ->
                 DiracState.setEnabled(context, value as Boolean)
                 DiracQemEffect.apply(context)
+                // The width row's gate reads the master switch, so the switch
+                // has to repaint it: a route change does not follow a toggle.
+                sumDiffPreference?.refresh()
                 true
             }
         }
@@ -91,14 +94,6 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
         // The host-output fallback row exists only when the build ships the
         // dirac_biquad effect. Absent that, the row is removed: no dead
         // preference, no listener, and nothing that would ever be pushed.
-        // The Sum/Diff probe is a development instrument, removed unless the
-        // build turns it on; the shipping row is untouched either way.
-        findPreference<SumDiffProbePreference>(KEY_SUMDIFF_PROBE)?.let { probe ->
-            if (!resources.getBoolean(R.bool.config_dirac_sumdiff_probe)) {
-                preferenceScreen.removePreference(probe)
-            }
-        }
-
         val fallback = findPreference<SwitchPreferenceCompat>(KEY_BIQUAD_FALLBACK)
         if (fallback != null) {
             if (!DiracState.isBiquadFallbackAvailable(context)) {
@@ -172,6 +167,9 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
     override fun onResume() {
         super.onResume()
         DiracQemEffect.apply(requireContext())
+        // The rows' gates read state that may have changed while the page was
+        // away - the master switch above all - so they are repainted on return.
+        refreshRouteRows()
     }
 
     /** Repaints the board and the curve from the engine's current array. */
@@ -181,8 +179,9 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
     }
 
     /**
-     * Re-reads every row whose state follows the live output: the headset model
-     * and the stereo-width row, which is inert wherever the DSP owns the width.
+     * Re-reads every row whose state follows the live output or the master
+     * switch: the headset model, and the stereo-width row, which is inert only
+     * where no Dirac layer owns the width.
      */
     private fun refreshRouteRows() {
         if (!isAdded) {
@@ -218,6 +217,5 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
         const val KEY_EQ_PREVIEW = "dirac_eq_preview"
         const val KEY_EQ_BOARD = "dirac_eq_board"
         const val KEY_SUMDIFF = "dirac_sumdiff"
-        const val KEY_SUMDIFF_PROBE = "dirac_sumdiff_probe"
     }
 }

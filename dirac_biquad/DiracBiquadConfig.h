@@ -54,7 +54,8 @@ class DiracBiquadConfig {
     // open or read failure, EINVAL on a parse failure, and 0 on success; it may
     // be null. `fallback` is the software-fallback switch and defaults OFF, so
     // a host output is voiced only when the user has explicitly extended Dirac
-    // to it. `sumdiff` is the mid/side width in 0..1 and also defaults to 0,
+    // to it. `sumdiff` is the mid/side width as the conf stores it, 0..2, and
+    // also defaults to 0,
     // i.e. bypass.
     // `volumeDb` is the stream attenuation in dB below the reference
     // (the app publishes it), or kUnknownVolumeDb.

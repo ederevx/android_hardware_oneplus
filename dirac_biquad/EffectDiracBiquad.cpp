@@ -84,8 +84,9 @@ typedef struct dirac_biquad_object_s {
     // user extends Dirac to them. Data source: DiracBiquadConfig, written only
     // by the HAL; the effect never writes ACDB/cal or any DSP state.
     bool fallback;
-    // The mid/side widening amount for the host fallback, in 0..1: StereoWidth
-    // scales the side signal by g(w) when this is set and the effect is
+    // The mid/side widening amount for the host fallback, 0..2 as the conf stores
+    // it; StereoWidth clamps at 1.0, so that is the widest this stage applies.
+    // It scales the side signal by g(w) when this is set and the effect is
     // otherwise active. Reloaded with the rest of the state.
     float sumdiff;
     // Stream attenuation in dB below the reference, from `volume_db` in the QEM

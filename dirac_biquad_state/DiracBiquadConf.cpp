@@ -58,9 +58,9 @@ double ClampVolumeDb(double volumeDb) {
 }
 
 // The width the app may publish; a non-finite or negative value is the bypass.
-// The state admits the probe control's range, so a sweep past the 1.0 the host
-// stage itself clamps at stays visible in this file and in the effect's dump;
-// the effect still clamps its own side gain at 1.0.
+// The state admits the range the app's width row offers, so a value past the 1.0
+// the host stage itself clamps at stays visible in this file and in the effect's
+// dump; the effect still clamps its own side gain at 1.0.
 constexpr float kMaxSumDiff = 2.0f;
 
 float ClampSumDiff(float sumdiff) {

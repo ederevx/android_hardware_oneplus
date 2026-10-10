@@ -102,9 +102,10 @@ class DiracBiquadFilter {
     // the preamp probe never sees it.
     void SetAttenuationDb(double attenuationDb);
 
-    // Enables the final mid/side widening. `sumDiff` is the width in 0..1; it
-    // is a pure side gain applied after every filter stage, so it never changes
-    // the cascade's per-channel response or group delay.
+    // Enables the final mid/side widening. `sumDiff` is the stored width, 0..2;
+    // StereoWidth clamps its side gain at 1.0, so above that the stage applies
+    // its maximum. It is a pure side gain applied after every filter stage, so it
+    // never changes the cascade's per-channel response or group delay.
     void SetSumDiff(float sumDiff);
 
     void Reset();

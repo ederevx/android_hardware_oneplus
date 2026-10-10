@@ -67,18 +67,19 @@ object DiracState {
     private const val KEY_SUMDIFF = "sumdiff"
 
     /**
-     * The width a fresh install starts at and the reset target: the middle of
-     * the range, which the slider also draws its detent under. 0.0 stays the
-     * neutral value the effect bypasses and the disable path restores.
+     * The width a fresh install starts at and the reset target. It is no longer
+     * the middle of the range now that the range runs to [SUMDIFF_MAX], so the
+     * slider draws its detent here rather than at the middle: the tick stays
+     * where the reset returns the value. 0.0 remains the neutral value the effect
+     * bypasses and the disable path restores.
      */
     const val SUMDIFF_DEFAULT = 0.5f
 
     /**
-     * The widest width this state stores. The shipping row's own range stops at
-     * 1.0; the room above it exists for the probe control, which sweeps past the
-     * limit the layers below enforce so the device can show where each of them
-     * saturates. The host stage clamps anything above 1.0 to its own maximum
-     * side gain, and only the ADSP frame carries the value further.
+     * The widest width this state stores and the range of the width row. The host
+     * stage clamps anything above 1.0 to its own maximum side gain, so past that
+     * point only the ADSP frame carries the value further and the row's readout
+     * says so.
      */
     const val SUMDIFF_MAX = 2.0f
 
@@ -282,14 +283,20 @@ object DiracState {
     fun sink(context: Context): DiracRouteResolver.Sink = DiracRouteResolver.sink(context)
 
     /**
-     * Whether the host stage can apply the width on the live sink: it runs only
-     * where the DSP does not voice the output, and only while the software
-     * fallback that carries it is shipped and switched on. Anywhere else the
-     * width row has nothing to act on.
+     * Whether the width has an owner on the live sink: the master switch is on
+     * and either the DSP voices the output, whose frame carries the value, or the
+     * host stage does and the software fallback that carries it is shipped and
+     * switched on. Where neither holds, the width row has nothing to act on.
+     *
+     * A host output the resolver cannot tell apart yet - USB, the remote submix -
+     * classifies as SPEAKER and so reads as DSP-voiced here, while no Dirac layer
+     * applies the width on it. That is the resolver's limitation and is recorded
+     * there; it is not a second gate to add in this one.
      */
     fun isWideningActive(context: Context): Boolean =
-        !sink(context).dspVoiced && isBiquadFallbackAvailable(context) &&
-            isBiquadFallbackEnabled(context)
+        isEnabled(context) &&
+            (sink(context).dspVoiced ||
+                (isBiquadFallbackAvailable(context) && isBiquadFallbackEnabled(context)))
 
     /**
      * Whether the live sink is Bluetooth, which carries its own loudness scalar;

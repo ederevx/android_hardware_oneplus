@@ -62,7 +62,8 @@ import android.util.Log
  * app's current setting), params (comma separated ids to send alone, default is
  * the production set for the route), param (one id, an alternative to params),
  * repeats (frames per parameter, default 1), gap (ms between candidates, default
- * 6000 so a burst never overlaps the next). Each burst is logged under tag
+ * 1000 so a burst never overlaps the next while staying inside the foreground
+ * broadcast budget). Each burst is logged under tag
  * DiracQemProbe before its frames, and each frame logs its parameter, cal type
  * and repeat index, so the loader's answers can be correlated one to one.
  */

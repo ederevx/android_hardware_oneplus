@@ -86,7 +86,10 @@ double ParseVolumeDb(const char *value) {
     return parsed;
 }
 
-// The 0..1 width, with anything unparseable or out of range mapped into it.
+// The 0..2 width, with anything unparseable or out of range mapped into it. The
+// bound is this stage's own: the conf holds what the app wrote and the DSP frame
+// carried, and the host brightness stage clamps its side gain at 1.0 by itself,
+// so nothing here needs to saturate the wider value first.
 float ParseSumDiff(const char *value) {
     char *end = nullptr;
     const float parsed = strtof(value, &end);
@@ -96,8 +99,8 @@ float ParseSumDiff(const char *value) {
     if (parsed < 0.0f) {
         return 0.0f;
     }
-    if (parsed > 1.0f) {
-        return 1.0f;
+    if (parsed > 2.0f) {
+        return 2.0f;
     }
     return parsed;
 }

@@ -131,11 +131,11 @@ object DiracQemEffect {
     }
 
     /**
-     * The one place a frame is built: a parameter, the module and topology it
-     * addresses, the platform devices, and the selector fan-out. The pass and
-     * the dev probe differ only in the arguments they pass here, never in how a
-     * frame is composed, so a probe frame carries exactly the bytes a pass frame
-     * for that parameter carries.
+     * The one place a pass or probe frame is composed: a parameter, the module
+     * and topology it addresses, the platform devices, and the selector fan-out.
+     * The band push composes from its gesture snapshot directly, and both paths
+     * end in QemProtocol.frame, so the pass and the dev probe differ only in the
+     * arguments they pass here, never in how a frame is composed.
      */
     private fun sendFrame(
         context: Context,

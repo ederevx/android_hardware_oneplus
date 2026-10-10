@@ -23,7 +23,6 @@ import android.widget.TextView
 import androidx.preference.Preference
 import androidx.preference.PreferenceViewHolder
 import com.android.settingslib.widget.NormalPaddingMixin
-import kotlin.math.roundToInt
 
 /**
  * The stereo-width row: a labelled [HorizontalSlider] that reads and writes the
@@ -32,9 +31,15 @@ import kotlin.math.roundToInt
  * title below it with the reset beside the title, so the bar owns the full
  * width of the row.
  *
- * Where the host stage cannot apply the width - a sink the DSP voices, or the
- * software fallback switched off - the row is inert: the bar and its reset are
- * greyed and the magnitude slot reads N/A instead of the stored width.
+ * The range is [DiracState.SUMDIFF_MAX], and the readout says when a value sits
+ * past the 1.00 the host stage clamps its side gain at, because above that point
+ * only the ADSP frame carries the value anywhere and its effect is not
+ * established.
+ *
+ * Where the width has nothing to act on - a sink no Dirac layer voices and the
+ * software fallback switched off, or the fallback absent from the build - the
+ * row is inert: the bar and its reset are greyed and the magnitude slot reads
+ * N/A instead of the stored width.
  */
 class SumDiffPreference @JvmOverloads constructor(
     context: Context,
@@ -53,10 +58,12 @@ class SumDiffPreference @JvmOverloads constructor(
 
     override fun onBindViewHolder(holder: PreferenceViewHolder) {
         super.onBindViewHolder(holder)
-        bar = holder.itemView.findViewById<HorizontalSlider>(R.id.dirac_sumdiff_slider)
+        bar = holder.itemView.findViewById<HorizontalSlider>(R.id.dirac_sumdiff_slider)?.apply {
+            setMinMax(0f, DiracState.SUMDIFF_MAX)
+            onValueChanged = { value -> showValue(value) }
+        }
         reset = holder.itemView.findViewById(R.id.dirac_sumdiff_reset)
         valueLabel = holder.itemView.findViewById(R.id.dirac_sumdiff_value)
-        bar?.onValueChanged = { value -> showValue(value) }
         refresh()
         // The trailing button restores the default through the slider, so it
         // inherits the staged settle and the one write that follows it.
@@ -83,15 +90,18 @@ class SumDiffPreference @JvmOverloads constructor(
     }
 
     private fun showValue(value: Float) {
-        valueLabel?.text = if (inert) {
-            context.getString(R.string.dirac_sumdiff_unavailable)
-        } else {
-            context.getString(R.string.dirac_sumdiff_value, (value * 100f).roundToInt())
+        valueLabel?.text = when {
+            inert -> context.getString(R.string.dirac_sumdiff_unavailable)
+            value > HOST_BOUND -> context.getString(R.string.dirac_sumdiff_value_past_bound, value)
+            else -> context.getString(R.string.dirac_sumdiff_value, value)
         }
     }
 
     private companion object {
         /** The standard inert look; the bar draws its own colours. */
         const val DISABLED_ALPHA = 0.38f
+
+        /** The width past which only the ADSP frame carries the value. */
+        const val HOST_BOUND = 1.0f
     }
 }
