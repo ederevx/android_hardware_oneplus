@@ -84,6 +84,10 @@ typedef struct dirac_biquad_object_s {
     // user extends Dirac to them. Data source: DiracBiquadConfig, written only
     // by the HAL; the effect never writes ACDB/cal or any DSP state.
     bool fallback;
+    // Who applies the width on a sink the DSP voices: true means the host
+    // stage, which is the app's determination, cleared-first handover included.
+    // The DSP is the other owner; exactly one of them applies the width.
+    bool widthOwnerHost;
     // The mid/side widening amount for the host fallback, in 0..1: StereoWidth
     // scales the side signal by g(w) when this is set and the effect is
     // otherwise active. Reloaded with the rest of the state.
@@ -255,7 +259,11 @@ static HostScope DiracBiquad_HostScope(const dirac_biquad_object_t *context) {
         return HostScope::kNone;
     }
     if (DiracBiquad_IsDspOutput(context->device)) {
-        return HostScope::kWidthOnly;
+        // The route is one the DSP voices, but that is intent, not evidence that
+        // it applies anything: it is DSP-voiced today while the loader refuses
+        // every frame. The host therefore applies the width unless the app has
+        // handed ownership to the DSP, and it hands it over only on evidence.
+        return context->widthOwnerHost ? HostScope::kWidthOnly : HostScope::kNone;
     }
     return context->fallback ? HostScope::kCascade : HostScope::kNone;
 }
@@ -527,7 +535,8 @@ static void DiracBiquad_ReloadConfig(dirac_biquad_object_t *context) {
 
     int error = 0;
     if (DiracBiquadConfig::Load(context->gainsHalfDb, &context->diracEnabled, &context->fallback,
-                                &context->sumdiff, &context->volumeDb, &error)) {
+                                &context->sumdiff, &context->volumeDb,
+                                &context->widthOwnerHost, &error)) {
         context->lastLoadError = 0;
     } else if (error != context->lastLoadError) {
         // Keep the last good state: an unreadable or torn file must never
@@ -551,8 +560,8 @@ static void DiracBiquad_ReloadConfig(dirac_biquad_object_t *context) {
     context->filter.SetAttenuationDb(context->volumeDb);
     // Forward the widening switch on every reload, like the attenuation.
     context->filter.SetSumDiff(context->sumdiff);
-    ALOGV("%s: dirac %d fallback %d sumdiff %.3f volume_db %.1f gains %d;%d;%d;%d;%d;%d;%d", __func__,
-          context->diracEnabled, context->fallback, context->sumdiff, context->volumeDb,
+    ALOGV("%s: dirac %d fallback %d owner_host %d sumdiff %.3f volume_db %.1f gains %d;%d;%d;%d;%d;%d;%d", __func__,
+          context->diracEnabled, context->fallback, context->widthOwnerHost, context->sumdiff, context->volumeDb,
           context->gainsHalfDb[0], context->gainsHalfDb[1], context->gainsHalfDb[2],
           context->gainsHalfDb[3], context->gainsHalfDb[4], context->gainsHalfDb[5],
           context->gainsHalfDb[6]);
@@ -563,12 +572,13 @@ static int DiracBiquad_Init(dirac_biquad_module_t *module) {
     module->context.configured = false;
     module->context.enabled = false;
     module->context.fallback = false;
+    module->context.widthOwnerHost = false;
     module->context.sumdiff = 0.0f;
     module->context.device = AUDIO_DEVICE_NONE;
     module->context.lastLoadError = 0;
     DiracBiquadConfig::Fallback(module->context.gainsHalfDb, &module->context.diracEnabled,
                               &module->context.fallback, &module->context.sumdiff,
-                              &module->context.volumeDb);
+                              &module->context.volumeDb, &module->context.widthOwnerHost);
 
     DiracBiquad_Reset(&module->context);
     return 0;

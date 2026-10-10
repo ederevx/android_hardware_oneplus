@@ -109,7 +109,8 @@ const char *DiracBiquadConfig::ConfigPath() {
 }
 
 void DiracBiquadConfig::Fallback(int gainsHalfDb[kBandCount], bool *enabled,
-                               bool *fallback, float *sumdiff, double *volumeDb) {
+                               bool *fallback, float *sumdiff, double *volumeDb,
+                               bool *widthOwnerHost) {
     for (size_t i = 0; i < kBandCount; ++i) {
         gainsHalfDb[i] = kFallbackGains[i];
     }
@@ -118,6 +119,9 @@ void DiracBiquadConfig::Fallback(int gainsHalfDb[kBandCount], bool *enabled,
     }
     if (fallback != nullptr) {
         *fallback = false;
+    }
+    if (widthOwnerHost != nullptr) {
+        *widthOwnerHost = false;
     }
     if (sumdiff != nullptr) {
         *sumdiff = 0.0f;
@@ -128,7 +132,8 @@ void DiracBiquadConfig::Fallback(int gainsHalfDb[kBandCount], bool *enabled,
 }
 
 bool DiracBiquadConfig::Load(int gainsHalfDb[kBandCount], bool *enabled, bool *fallback,
-                             float *sumdiff, double *volumeDb, int *errorCode) {
+                             float *sumdiff, double *volumeDb, bool *widthOwnerHost,
+                             int *errorCode) {
     if (errorCode != nullptr) {
         *errorCode = 0;
     }
@@ -137,6 +142,7 @@ bool DiracBiquadConfig::Load(int gainsHalfDb[kBandCount], bool *enabled, bool *f
     bool parsedEnabled = kFallbackEnabled;
     bool parsedFallback = false;
     float parsedSumdiff = 0.0f;
+    bool parsedWidthOwnerHost = false;
     bool haveEnabled = false;
     bool haveBands = false;
     double parsedVolumeDb = kUnknownVolumeDb;
@@ -168,6 +174,8 @@ bool DiracBiquadConfig::Load(int gainsHalfDb[kBandCount], bool *enabled, bool *f
             haveEnabled = true;
         } else if (strcmp(key, "fallback") == 0) {
             parsedFallback = strtol(value, nullptr, 10) != 0;
+        } else if (strcmp(key, "width_owner") == 0) {
+            parsedWidthOwnerHost = atoi(value) != 0;
         } else if (strcmp(key, "sumdiff") == 0) {
             parsedSumdiff = ParseSumDiff(value);
         } else if (strcmp(key, "bands") == 0) {
@@ -202,6 +210,9 @@ bool DiracBiquadConfig::Load(int gainsHalfDb[kBandCount], bool *enabled, bool *f
     }
     if (fallback != nullptr) {
         *fallback = parsedFallback;
+    }
+    if (widthOwnerHost != nullptr) {
+        *widthOwnerHost = parsedWidthOwnerHost;
     }
     if (sumdiff != nullptr) {
         *sumdiff = parsedSumdiff;

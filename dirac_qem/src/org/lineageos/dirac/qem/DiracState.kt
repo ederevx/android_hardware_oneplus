@@ -126,6 +126,7 @@ object DiracState {
     class Snapshot(
         val enabled: Boolean,
         val biquadFallback: Boolean,
+        val widthOwnerHost: Boolean,
         val sumdiff: Float,
         val bandsHalfDb: IntArray,
         val volumeDb: Double,
@@ -133,13 +134,15 @@ object DiracState {
         fun sameAs(other: Snapshot?): Boolean = other != null &&
             enabled == other.enabled &&
             biquadFallback == other.biquadFallback &&
+              widthOwnerHost == other.widthOwnerHost &&
             sumdiff == other.sumdiff &&
             volumeDb == other.volumeDb &&
             bandsHalfDb.contentEquals(other.bandsHalfDb)
 
         override fun toString(): String =
-            "enabled=$enabled fallback=$biquadFallback sumdiff=$sumdiff volume_db=$volumeDb " +
-                "bands=${bandsHalfDb.joinToString(";")}"
+              "enabled=$enabled fallback=$biquadFallback owner_host=$widthOwnerHost " +
+                  "sumdiff=$sumdiff volume_db=$volumeDb " +
+                  "bands=${bandsHalfDb.joinToString(";")}"
     }
 
     private fun prefs(context: Context): SharedPreferences {
@@ -453,7 +456,15 @@ object DiracState {
         if (next.sameAs(lastPublished)) {
             return false
         }
-        if (!DiracBiquadState.send(next.enabled, next.biquadFallback, next.sumdiff, next.bandsHalfDb, next.volumeDb)) {
+        if (!DiracBiquadState.send(
+                next.enabled,
+                next.biquadFallback,
+                next.widthOwnerHost,
+                next.sumdiff,
+                next.bandsHalfDb,
+                next.volumeDb,
+            )
+        ) {
             return false
         }
         lastPublished = next
@@ -478,7 +489,14 @@ object DiracState {
             return true
         }
         val reading =
-            Snapshot(echoed.enabled, echoed.fallback, echoed.sumDiff, echoed.bandsHalfDb, echoed.volumeDb)
+            Snapshot(
+                echoed.enabled,
+                echoed.fallback,
+                echoed.widthOwnerHost,
+                echoed.sumDiff,
+                echoed.bandsHalfDb,
+                echoed.volumeDb,
+            )
         if (reading.sameAs(published)) {
             return true
         }
@@ -489,6 +507,9 @@ object DiracState {
     private fun compose(context: Context): Snapshot = Snapshot(
         enabled,
         biquadFallback,
+        // The one decision, published: which side applies the width on the live
+        // sink. The effect reads this instead of inferring an owner itself.
+        isWideningActive(context),
         sumdiff,
         currentBands(context).copyOf(),
         attenuationDb,

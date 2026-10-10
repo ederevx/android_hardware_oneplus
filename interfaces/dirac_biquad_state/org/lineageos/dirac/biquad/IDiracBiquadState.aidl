@@ -30,7 +30,8 @@ interface IDiracBiquadState {
      * attenuation in dB below the reference, or a value <= 0 when the volume
      * is unknown (the effect then leaves the tilt off).
      */
-    void setState(boolean enabled, boolean fallback, float sumdiff, in int[] bandsHalfDb,
+    void setState(boolean enabled, boolean fallback, boolean widthOwnerHost, float sumdiff,
+                  in int[] bandsHalfDb,
                   double volumeDb);
 
     /**
@@ -44,6 +45,9 @@ interface IDiracBiquadState {
 
     /** The fallback flag of the last persisted state. */
     boolean getFallback();
+
+    /** Whether the host stage applies the width on a sink the DSP voices. */
+    boolean getWidthOwnerHost();
 
     /** The mid/side width of the last persisted state, in 0..1. */
     float getSumDiff();

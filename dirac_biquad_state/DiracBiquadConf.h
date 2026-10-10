@@ -40,18 +40,22 @@ class DiracBiquadConf {
     struct State {
         bool enabled = false;
         bool fallback = false;
+        bool widthOwnerHost = false;
         float sumdiff = 0.0f;
         std::vector<int32_t> bandsHalfDb;
         double volumeDb = kUnknownVolumeDb;
     };
 
-    // Writes enabled, fallback, the mid/side width (0..2; the host stage clamps
-    // its own side gain at 1.0), the clamped band
-    // gains and the validated stream attenuation atomically. A call whose
+    // Writes enabled, fallback, which owner applies the width, the mid/side
+    // width (0..2; the host stage clamps its own side gain at 1.0), the clamped
+    // band gains and the validated stream attenuation atomically. `widthOwnerHost`
+    // and `fallback` are deliberately two fields with two meanings: fallback is
+    // the user switch that extends Dirac to the host sinks, ownership is the
+    // app's per-state determination of which side applies the width. A call whose
     // serialized content matches the last one is a no-op: no temp file, no
     // rename and no mtime change, so a repeated publish cannot make the effect
     // reload. Returns true when the state is on disk, including the no-op case.
-    bool Write(bool enabled, bool fallback, float sumdiff,
+    bool Write(bool enabled, bool fallback, bool widthOwnerHost, float sumdiff,
                const std::vector<int32_t> &bandsHalfDb, double volumeDb);
 
     // The last state successfully put on disk. False until the first Write.

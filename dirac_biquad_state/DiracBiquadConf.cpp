@@ -80,6 +80,7 @@ std::string Format(const DiracBiquadConf::State &state) {
                         ", stream attenuation\n";
     body += "enabled=" + std::string(state.enabled ? "1" : "0") + "\n";
     body += "fallback=" + std::string(state.fallback ? "1" : "0") + "\n";
+    body += "width_owner=" + std::string(state.widthOwnerHost ? "1" : "0") + "\n";
     body += "bands=";
     for (size_t i = 0; i < state.bandsHalfDb.size(); ++i) {
         if (i != 0) {
@@ -95,7 +96,7 @@ std::string Format(const DiracBiquadConf::State &state) {
 
 }  // namespace
 
-bool DiracBiquadConf::Write(bool enabled, bool fallback, float sumdiff,
+bool DiracBiquadConf::Write(bool enabled, bool fallback, bool widthOwnerHost, float sumdiff,
                             const std::vector<int32_t> &bandsHalfDb, double volumeDb) {
     if (bandsHalfDb.size() != kBandCount) {
         LOG(ERROR) << "expected " << kBandCount << " bands, got " << bandsHalfDb.size();
@@ -107,6 +108,7 @@ bool DiracBiquadConf::Write(bool enabled, bool fallback, float sumdiff,
     State state;
     state.enabled = enabled;
     state.fallback = fallback;
+    state.widthOwnerHost = widthOwnerHost;
     state.sumdiff = ClampSumDiff(sumdiff);
     state.bandsHalfDb.resize(bandsHalfDb.size());
     for (size_t i = 0; i < bandsHalfDb.size(); ++i) {

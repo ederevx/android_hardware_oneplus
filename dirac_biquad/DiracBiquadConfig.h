@@ -59,7 +59,7 @@ class DiracBiquadConfig {
     // `volumeDb` is the stream attenuation in dB below the reference
     // (the app publishes it), or kUnknownVolumeDb.
     static bool Load(int gainsHalfDb[kBandCount], bool *enabled, bool *fallback, float *sumdiff,
-                     double *volumeDb, int *errorCode = nullptr);
+                     double *volumeDb, bool *widthOwnerHost, int *errorCode = nullptr);
 
     // The baked preset used before the state file has ever been loaded. It is
     // the initial default only, never a fallback for a failed reload.
@@ -67,7 +67,7 @@ class DiracBiquadConfig {
     // unknown here: the switches are opt-in and the tilt is driven only by a
     // real published volume.
     static void Fallback(int gainsHalfDb[kBandCount], bool *enabled, bool *fallback, float *sumdiff,
-                         double *volumeDb);
+                         double *volumeDb, bool *widthOwnerHost);
 
     static const char *ConfigPath();
 };

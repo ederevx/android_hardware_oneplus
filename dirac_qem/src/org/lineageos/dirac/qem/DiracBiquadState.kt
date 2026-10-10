@@ -37,6 +37,7 @@ object DiracBiquadState {
     class Reading(
         val enabled: Boolean,
         val fallback: Boolean,
+        val widthOwnerHost: Boolean,
         val sumDiff: Float,
         val bandsHalfDb: IntArray,
         val volumeDb: Double,
@@ -46,6 +47,7 @@ object DiracBiquadState {
     fun send(
         enabled: Boolean,
         fallback: Boolean,
+        widthOwnerHost: Boolean,
         sumdiff: Float,
         bandsHalfDb: IntArray,
         volumeDb: Double,
@@ -55,6 +57,7 @@ object DiracBiquadState {
             IDiracBiquadState.Stub.asInterface(binder).setState(
                 enabled,
                 fallback,
+                widthOwnerHost,
                 sumdiff,
                 bandsHalfDb,
                 volumeDb,
@@ -78,7 +81,14 @@ object DiracBiquadState {
                 return null
             }
             val bands = service.bandsHalfDb ?: return null
-            Reading(service.enabled, service.fallback, service.sumDiff, bands, service.volumeDb)
+            Reading(
+                service.enabled,
+                service.fallback,
+                service.widthOwnerHost,
+                service.sumDiff,
+                bands,
+                service.volumeDb,
+            )
         } catch (e: RemoteException) {
             DiracTrace.log(TAG) { "read failed: ${e.message}" }
             null
