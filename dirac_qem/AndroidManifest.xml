@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="org.lineageos.dirac.qem"
+    android:versionCode="1"
+    android:versionName="1.0">
+
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <application
+        android:label="OnePlusDiracQem"
+        android:icon="@drawable/ic_dirac"
+        android:theme="@style/Theme.SubSettingsBase.Expressive"
+        android:defaultToDeviceProtectedStorage="true"
+        android:directBootAware="true">
+
+        <receiver android:name=".BootCompletedReceiver"
+                  android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </receiver>
+
+        <!-- ACTION_HEADSET_PLUG is registered-only, so the jack needs the
+             runtime registration DiracRouteService holds. -->
+        <service android:name=".DiracRouteService"
+                 android:exported="false" />
+
+        <!-- DEV PROBE only: lets the device operator trigger a topology walk
+             through `am broadcast`. Not part of the shipped feature. -->
+        <receiver android:name=".DiracProbeReceiver"
+                  android:exported="true">
+            <intent-filter>
+                <action android:name="org.lineageos.dirac.qem.PROBE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </receiver>
+
+        <activity android:name=".DiracQemSettingsActivity"
+                  android:exported="true"
+                  android:label="@string/dirac_title">
+            <intent-filter>
+                <action android:name="com.android.settings.action.IA_SETTINGS" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <meta-data
+                android:name="com.android.settings.category"
+                android:value="com.android.settings.category.ia.sound" />
+            <!-- Match the neighbouring Audio rows: no icon, a summary line, and
+                 placement inside the Audio section; order is its position knob. -->
+            <meta-data
+                android:name="com.android.settings.summary"
+                android:resource="@string/dirac_enable_summary" />
+            <meta-data
+                android:name="com.android.settings.group_key"
+                android:value="audio_category" />
+            <meta-data
+                android:name="com.android.settings.order"
+                android:value="-90" />
+        </activity>
+    </application>
+</manifest>
