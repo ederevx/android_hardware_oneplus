@@ -27,8 +27,10 @@ import java.util.concurrent.atomic.AtomicReference
  *
  * The state itself lives in [DiracState]; this engine only turns it into the
  * frames the two Dirac topologies accept. The speaker is module 0x12D00 on
- * topology 0x10012D00, sound device 2, and the wired headset is module 0x12D01
- * on topology 0x10012D01, sound device 9. The same parameter sequence -- 0x12D01
+ * topology 0x10012D00 and the wired jack is module 0x12D01 on topology
+ * 0x10012D01. Every frame names the live platform audio device and lets the
+ * HAL resolve it; [DiracRouteResolver.outputDevice] is that device. The same
+ * parameter sequence -- 0x12D01
  * enable, 0x12D35 EQ enable, 0x12D36 28-byte coefficients, 0x12D67 sound-field
  * enable, plus the headset-only 0x12D03 / 0x12D04 filter select -- is written to
  * whichever module the active route names.
@@ -39,22 +41,6 @@ import java.util.concurrent.atomic.AtomicReference
  */
 object DiracQemEffect {
     private const val TAG_BANDS = "DiracQemBands"
-
-    /**
-     * Frames for the speaker name the sound device explicitly instead of the
-     * audio device, because the HAL's own output routing does not have to
-     * resolve AUDIO_DEVICE_OUT_SPEAKER to this exact sound device.
-     */
-    private const val SND_DEVICE_OUT_SPEAKER = 2
-
-    /**
-     * Speaker sound device. Nothing names a sound device for the wired route:
-     * the headset stream reports acdb_dev_id 10, and a frame that claims 9 is
-     * refused with "active device/stream not found", so that route sends
-     * cal_devid=0 alone and lets the HAL resolve the output. This is the
-     * selector the headset topology 0x10012D01 accepts; addressing it with the
-     * speaker module 0x12D00 is rejected outright.
-     */
 
     private const val SCALAR_TONAL_BALANCE = 3
     private const val SCALAR_LOUDNESS = 4
@@ -117,9 +103,8 @@ object DiracQemEffect {
     private fun sendBands(push: Push) {
         val started = System.nanoTime()
         val frames = QemTransport(push.context).send(
-            moduleFor(push.route), topoFor(push.route), devicesFor(push.route),
-            QemProtocol.PARAM_EQ_BANDS, QemProtocol.eqBandsPayload(push.bands),
-            sndDevIdFor(push.route))
+            moduleFor(push.route), topoFor(push.route), deviceFor(push.context),
+            QemProtocol.PARAM_EQ_BANDS, QemProtocol.eqBandsPayload(push.bands))
         // Always on, and on the worker: this is the HAL-side proof, not a
         // frame-level measurement, so it costs the UI thread nothing.
         Log.d(TAG_BANDS, "push route=${push.route} frames=$frames ns=${System.nanoTime() - started}")
@@ -156,8 +141,8 @@ object DiracQemEffect {
     private fun send(context: Context, key: Int, payload: ByteArray) {
         val output = DiracState.output(context)
         QemTransport(context).send(
-            moduleFor(output), topoFor(output), devicesFor(output),
-            QemProtocol.PARAM_SCALAR_BASE + key, payload, sndDevIdFor(output))
+            moduleFor(output), topoFor(output), deviceFor(context),
+            QemProtocol.PARAM_SCALAR_BASE + key, payload)
     }
 
     /**
@@ -245,14 +230,14 @@ object DiracQemEffect {
         calType: Int = QemProtocol.CALTYPE_ACDB,
     ) {
         QemTransport(context).send(
-            moduleFor(output), topoFor(output), devicesFor(output), param, payload,
-            sndDevIdFor(output), calType = calType)
+            moduleFor(output), topoFor(output), deviceFor(context), param, payload,
+            calType = calType)
     }
 
     private fun sendDisable(context: Context, output: Int) {
         QemTransport(context).send(
-            moduleFor(output), topoFor(output), devicesFor(output),
-            QemProtocol.PARAM_ENABLE, QemProtocol.intPayload(0), sndDevIdFor(output))
+            moduleFor(output), topoFor(output), deviceFor(context),
+            QemProtocol.PARAM_ENABLE, QemProtocol.intPayload(0))
         sendOp(context, output, QemProtocol.PARAM_SUMDIFF,
             QemProtocol.floatPayload(QemProtocol.SUMDIFF_OFF), QemProtocol.CALTYPE_RAW)
     }
@@ -277,20 +262,14 @@ object DiracQemEffect {
      * The wired route carries no cal_snddevid, so it needs one pass; the
      * speaker keeps its single-element device list.
      */
-    private fun devicesFor(output: Int): IntArray =
-        if (output == DiracState.OUTPUT_EXTERNAL) intArrayOf(0) else QemProtocol.DEVICES_INTERNAL
-
     /**
-     * Which snd_device a frame names, if any. The wired route names none:
-     * [devicesFor] already sends cal_devid=0 and lets the HAL resolve the
-     * output itself, and an explicit cal_snddevid that disagrees with the live
-     * stream's acdb device (9 against the wired route's 10) is refused with
-     * "active device/stream not found" - which was every wired frame this app
-     * sent. The speaker keeps its snd_device, because the HAL's own output
-     * routing does not have to resolve AUDIO_DEVICE_OUT_SPEAKER to that one.
+     * The one device every frame names: the live platform audio device, which
+     * the HAL resolves into its own sound device and ACDB device. The route
+     * selects module and topology only, so a frame cannot address a sink the
+     * live stream is not on, and the app names no sound device of its own.
      */
-    private fun sndDevIdFor(output: Int): Int =
-        if (output == DiracState.OUTPUT_EXTERNAL) 0 else SND_DEVICE_OUT_SPEAKER
+    private fun deviceFor(context: Context): IntArray =
+        intArrayOf(DiracRouteResolver.outputDevice(context))
 
     /**
      * DEV PROBE: send a single Dirac calibration frame with an explicit
@@ -302,8 +281,8 @@ object DiracQemEffect {
      */
     fun probeCal(context: Context, output: Int, topo: Int, appType: Int, rate: Int) {
         QemTransport(context).send(
-            moduleFor(output), topo, devicesFor(output), QemProtocol.PARAM_ENABLE,
-            QemProtocol.intPayload(1), sndDevIdFor(output),
+            moduleFor(output), topo, deviceFor(context), QemProtocol.PARAM_ENABLE,
+            QemProtocol.intPayload(1),
             appTypes = intArrayOf(appType), persistValues = intArrayOf(0),
             rates = intArrayOf(rate))
     }
