@@ -84,11 +84,6 @@ typedef struct dirac_biquad_object_s {
     // user extends Dirac to them. Data source: DiracBiquadConfig, written only
     // by the HAL; the effect never writes ACDB/cal or any DSP state.
     bool fallback;
-    // The mid/side widening amount for the host fallback, 0..2 as the conf stores
-    // it; StereoWidth clamps at 1.0, so that is the widest this stage applies.
-    // It scales the side signal by g(w) when this is set and the effect is
-    // otherwise active. Reloaded with the rest of the state.
-    float sumdiff;
     // Stream attenuation in dB below the reference, from `volume_db` in the QEM
     // state file; DiracBiquadConfig::kUnknownVolumeDb means the tilt is
     // identity. Reloaded with the rest of the state.
@@ -374,11 +369,11 @@ static int32_t DiracBiquad_Command(effect_handle_t self,
                 return -EINVAL;
             }
             const int fd = static_cast<int>(*reinterpret_cast<uint32_t *>(pCmdData));
-            dprintf(fd, "Dirac Biquad Filter: state %u enabled %d dirac %d fallback %d sumdiff %.3f"
+            dprintf(fd, "Dirac Biquad Filter: state %u enabled %d dirac %d fallback %d"
                     " device %#x dsp %d volume_db=%.1f gains=%d;%d;%d;%d;%d;%d;%d"
                     " clip_knee %.3f\n",
                     context->state, context->enabled, context->diracEnabled, context->fallback,
-                    context->sumdiff, context->device, DiracBiquad_IsDspOutput(context->device),
+                    context->device, DiracBiquad_IsDspOutput(context->device),
                     context->volumeDb, context->gainsHalfDb[0], context->gainsHalfDb[1],
                     context->gainsHalfDb[2], context->gainsHalfDb[3], context->gainsHalfDb[4],
                     context->gainsHalfDb[5], context->gainsHalfDb[6],
@@ -489,7 +484,7 @@ static void DiracBiquad_ReloadConfig(dirac_biquad_object_t *context) {
 
     int error = 0;
     if (DiracBiquadConfig::Load(context->gainsHalfDb, &context->diracEnabled, &context->fallback,
-                                &context->sumdiff, &context->volumeDb, &error)) {
+                                &context->volumeDb, &error)) {
         context->lastLoadError = 0;
     } else if (error != context->lastLoadError) {
         // Keep the last good state: an unreadable or torn file must never
@@ -511,10 +506,8 @@ static void DiracBiquad_ReloadConfig(dirac_biquad_object_t *context) {
     // Forward the parsed attenuation on every reload so a volume step applies
     // without a configure or a device change.
     context->filter.SetAttenuationDb(context->volumeDb);
-    // Forward the widening switch on every reload, like the attenuation.
-    context->filter.SetSumDiff(context->sumdiff);
-    ALOGV("%s: dirac %d fallback %d sumdiff %.3f volume_db %.1f gains %d;%d;%d;%d;%d;%d;%d", __func__,
-          context->diracEnabled, context->fallback, context->sumdiff, context->volumeDb,
+    ALOGV("%s: dirac %d fallback %d volume_db %.1f gains %d;%d;%d;%d;%d;%d;%d", __func__,
+          context->diracEnabled, context->fallback, context->volumeDb,
           context->gainsHalfDb[0], context->gainsHalfDb[1], context->gainsHalfDb[2],
           context->gainsHalfDb[3], context->gainsHalfDb[4], context->gainsHalfDb[5],
           context->gainsHalfDb[6]);
@@ -525,12 +518,10 @@ static int DiracBiquad_Init(dirac_biquad_module_t *module) {
     module->context.configured = false;
     module->context.enabled = false;
     module->context.fallback = false;
-    module->context.sumdiff = 0.0f;
     module->context.device = AUDIO_DEVICE_NONE;
     module->context.lastLoadError = 0;
     DiracBiquadConfig::Fallback(module->context.gainsHalfDb, &module->context.diracEnabled,
-                              &module->context.fallback, &module->context.sumdiff,
-                              &module->context.volumeDb);
+                              &module->context.fallback, &module->context.volumeDb);
 
     DiracBiquad_Reset(&module->context);
     return 0;

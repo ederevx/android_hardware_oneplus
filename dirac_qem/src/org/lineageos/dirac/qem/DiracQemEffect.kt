@@ -116,14 +116,6 @@ object DiracQemEffect {
         sendSpec(context, DiracState.output(context), QemParams.TONAL_BALANCE)
     }
 
-    /** Pushes the stored Sum/Diff stereo width for the live route. */
-    fun setSumDiff(context: Context) {
-        if (!adspVoiced(context)) {
-            return
-        }
-        sendSpec(context, DiracState.output(context), QemParams.SUMDIFF)
-    }
-
     /** Sends one parameter to the module the live route names, as a full pass does. */
     private fun sendSpec(context: Context, output: Int, spec: QemParams.Spec) {
         sendFrame(context, moduleFor(output), topoFor(output), deviceFor(context), spec,
@@ -224,7 +216,6 @@ object DiracQemEffect {
 
     private fun sendDisable(context: Context, output: Int) {
         sendSpec(context, output, QemParams.ENABLE_OFF)
-        sendSpec(context, output, QemParams.SUMDIFF_OFF)
     }
 
     /**

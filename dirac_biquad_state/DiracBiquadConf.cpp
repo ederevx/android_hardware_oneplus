@@ -57,26 +57,11 @@ double ClampVolumeDb(double volumeDb) {
     return std::min(volumeDb, kMaxVolumeDb);
 }
 
-// The width the app may publish; a non-finite or negative value is the bypass.
-// The state admits the range the app's width row offers, so a value past the 1.0
-// the host stage itself clamps at stays visible in this file and in the effect's
-// dump; the effect still clamps its own side gain at 1.0.
-constexpr float kMaxSumDiff = 2.0f;
-
-float ClampSumDiff(float sumdiff) {
-    if (!std::isfinite(sumdiff) || sumdiff <= 0.0f) {
-        return 0.0f;
-    }
-    return std::min(sumdiff, kMaxSumDiff);
-}
-
 std::string Format(const DiracBiquadConf::State &state) {
     char volume[32];
     snprintf(volume, sizeof(volume), "%.1f", state.volumeDb);
-    char sumdiff[32];
-    snprintf(sumdiff, sizeof(sumdiff), "%.3f", state.sumdiff);
 
-    std::string body = "# dirac host biquad state: enabled/fallback/sumdiff, seven half-dB band gains"
+    std::string body = "# dirac host biquad state: enabled/fallback, seven half-dB band gains"
                         ", stream attenuation\n";
     body += "enabled=" + std::string(state.enabled ? "1" : "0") + "\n";
     body += "fallback=" + std::string(state.fallback ? "1" : "0") + "\n";
@@ -89,13 +74,12 @@ std::string Format(const DiracBiquadConf::State &state) {
     }
     body += "\n";
     body += "volume_db=" + std::string(volume) + "\n";
-    body += "sumdiff=" + std::string(sumdiff) + "\n";
     return body;
 }
 
 }  // namespace
 
-bool DiracBiquadConf::Write(bool enabled, bool fallback, float sumdiff,
+bool DiracBiquadConf::Write(bool enabled, bool fallback,
                             const std::vector<int32_t> &bandsHalfDb, double volumeDb) {
     if (bandsHalfDb.size() != kBandCount) {
         LOG(ERROR) << "expected " << kBandCount << " bands, got " << bandsHalfDb.size();
@@ -107,7 +91,6 @@ bool DiracBiquadConf::Write(bool enabled, bool fallback, float sumdiff,
     State state;
     state.enabled = enabled;
     state.fallback = fallback;
-    state.sumdiff = ClampSumDiff(sumdiff);
     state.bandsHalfDb.resize(bandsHalfDb.size());
     for (size_t i = 0; i < bandsHalfDb.size(); ++i) {
         state.bandsHalfDb[i] = ClampHalfDb(bandsHalfDb[i]);

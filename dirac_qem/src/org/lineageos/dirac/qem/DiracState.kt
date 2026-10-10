@@ -20,14 +20,13 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
 import java.util.concurrent.CopyOnWriteArraySet
-import kotlin.math.roundToInt
 
 /**
  * The one owner of the Dirac app state.
  *
  * Every published variable -- the enable flag, the biquad fallback opt-in, the
- * Sum/Diff width, the seven band gains, the stream attenuation, the resolved
- * route and the HDSOUND filter index -- lives here and is read and written only
+ * seven band gains, the stream attenuation, the resolved route and the HDSOUND
+ * filter index -- lives here and is read and written only
  * through this class.
  * It keeps the authoritative snapshot and the last payload handed to the
  * daemon, so [publish] is a no-op while the state is unchanged and opening the
@@ -64,24 +63,6 @@ object DiracState {
     // The stored key keeps its historical spelling: renaming it would silently
     // reset the switch on every existing install.
     private const val KEY_BIQUAD_FALLBACK = "a2dp_fallback"
-    private const val KEY_SUMDIFF = "sumdiff"
-
-    /**
-     * The width a fresh install starts at and the reset target. It is no longer
-     * the middle of the range now that the range runs to [SUMDIFF_MAX], so the
-     * slider draws its detent here rather than at the middle: the tick stays
-     * where the reset returns the value. 0.0 remains the neutral value the effect
-     * bypasses and the disable path restores.
-     */
-    const val SUMDIFF_DEFAULT = 0.5f
-
-    /**
-     * The widest width this state stores and the range of the width row. The host
-     * stage clamps anything above 1.0 to its own maximum side gain, so past that
-     * point only the ADSP frame carries the value further and the row's readout
-     * says so.
-     */
-    const val SUMDIFF_MAX = 2.0f
 
     /** The loudness law is flat past this; it only bounds a mute. */
     private const val MAX_VOLUME_DB = 120.0
@@ -91,7 +72,6 @@ object DiracState {
     private var ready = false
     private var enabled = false
     private var biquadFallback = false
-    private var sumdiff = 0.0f
     private var style = DiracPresets.STYLE_NONE
     private var model = 0
     private var movie = false
@@ -127,19 +107,17 @@ object DiracState {
     class Snapshot(
         val enabled: Boolean,
         val biquadFallback: Boolean,
-        val sumdiff: Float,
         val bandsHalfDb: IntArray,
         val volumeDb: Double,
     ) {
         fun sameAs(other: Snapshot?): Boolean = other != null &&
             enabled == other.enabled &&
             biquadFallback == other.biquadFallback &&
-            sumdiff == other.sumdiff &&
             volumeDb == other.volumeDb &&
             bandsHalfDb.contentEquals(other.bandsHalfDb)
 
         override fun toString(): String =
-            "enabled=$enabled fallback=$biquadFallback sumdiff=$sumdiff volume_db=$volumeDb " +
+            "enabled=$enabled fallback=$biquadFallback volume_db=$volumeDb " +
                 "bands=${bandsHalfDb.joinToString(";")}"
     }
 
@@ -162,7 +140,6 @@ object DiracState {
         val p = prefs(context)
         enabled = p.getBoolean(KEY_ENABLED, false)
         biquadFallback = p.getBoolean(KEY_BIQUAD_FALLBACK, false)
-        sumdiff = p.getFloat(KEY_SUMDIFF, SUMDIFF_DEFAULT)
         style = p.getInt(KEY_STYLE, DiracPresets.STYLE_NONE)
         model = p.getInt(KEY_MODEL, 0)
         movie = p.getBoolean(KEY_MOVIE, false)
@@ -206,35 +183,6 @@ object DiracState {
         ensureLoaded(context)
         biquadFallback = value
         prefs(context).edit().putBoolean(KEY_BIQUAD_FALLBACK, value).apply()
-    }
-
-    fun sumDiff(context: Context): Float {
-        ensureLoaded(context)
-        return sumdiff
-    }
-
-    /**
-     * Stages the width in the owned state without persisting or publishing it,
-     * so a drag repaints from it and the HAL is touched only at the settle. The
-     * value is quantized to the thousandth the conf stores, so [assertState]
-     * reads back exactly the float that was published.
-     */
-    fun setSumDiff(context: Context, value: Float): Boolean {
-        ensureLoaded(context)
-        val quantized =
-            (value.coerceIn(0.0f, SUMDIFF_MAX) * SUMDIFF_STEPS).roundToInt() / SUMDIFF_STEPS
-        if (quantized == sumdiff) {
-            return false
-        }
-        sumdiff = quantized
-        return true
-    }
-
-    /** Writes the settled width once and publishes it. */
-    fun persistSumDiff(context: Context) {
-        ensureLoaded(context)
-        prefs(context).edit().putFloat(KEY_SUMDIFF, sumdiff).apply()
-        publish(context)
     }
 
     fun style(context: Context): Int {
@@ -281,22 +229,6 @@ object DiracState {
      * this process was not running for is never missed.
      */
     fun sink(context: Context): DiracRouteResolver.Sink = DiracRouteResolver.sink(context)
-
-    /**
-     * Whether the width has an owner on the live sink: the master switch is on
-     * and either the DSP voices the output, whose frame carries the value, or the
-     * host stage does and the software fallback that carries it is shipped and
-     * switched on. Where neither holds, the width row has nothing to act on.
-     *
-     * A host output the resolver cannot tell apart yet - USB, the remote submix -
-     * classifies as SPEAKER and so reads as DSP-voiced here, while no Dirac layer
-     * applies the width on it. That is the resolver's limitation and is recorded
-     * there; it is not a second gate to add in this one.
-     */
-    fun isWideningActive(context: Context): Boolean =
-        isEnabled(context) &&
-            (sink(context).dspVoiced ||
-                (isBiquadFallbackAvailable(context) && isBiquadFallbackEnabled(context)))
 
     /**
      * Whether the live sink is Bluetooth, which carries its own loudness scalar;
@@ -457,7 +389,7 @@ object DiracState {
         if (next.sameAs(lastPublished)) {
             return false
         }
-        if (!DiracBiquadState.send(next.enabled, next.biquadFallback, next.sumdiff, next.bandsHalfDb, next.volumeDb)) {
+        if (!DiracBiquadState.send(next.enabled, next.biquadFallback, next.bandsHalfDb, next.volumeDb)) {
             return false
         }
         lastPublished = next
@@ -482,7 +414,7 @@ object DiracState {
             return true
         }
         val reading =
-            Snapshot(echoed.enabled, echoed.fallback, echoed.sumDiff, echoed.bandsHalfDb, echoed.volumeDb)
+            Snapshot(echoed.enabled, echoed.fallback, echoed.bandsHalfDb, echoed.volumeDb)
         if (reading.sameAs(published)) {
             return true
         }
@@ -493,14 +425,10 @@ object DiracState {
     private fun compose(context: Context): Snapshot = Snapshot(
         enabled,
         biquadFallback,
-        sumdiff,
         currentBands(context).copyOf(),
         attenuationDb,
     )
 
     private fun sanitizeVolumeDb(value: Double): Double =
         if (value.isFinite() && value > 0.0) value.coerceAtMost(MAX_VOLUME_DB) else UNKNOWN_VOLUME_DB
-
-    /** The thousand-step grid the conf's %.3f round-trips the width on. */
-    private const val SUMDIFF_STEPS = 1000f
 }

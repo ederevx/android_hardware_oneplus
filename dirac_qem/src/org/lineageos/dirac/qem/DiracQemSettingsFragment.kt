@@ -36,7 +36,6 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
     private var previewPreference: EqPreviewPreference? = null
     private var stylePreference: ListPreference? = null
     private var modelPreference: ListPreference? = null
-    private var sumDiffPreference: SumDiffPreference? = null
 
     /**
      * Re-evaluates the rows that follow the output when it changes while the
@@ -84,9 +83,6 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
             preference.setOnPreferenceChangeListener { _, value ->
                 DiracState.setEnabled(context, value as Boolean)
                 DiracQemEffect.apply(context)
-                // The width row's gate reads the master switch, so the switch
-                // has to repaint it: a route change does not follow a toggle.
-                sumDiffPreference?.refresh()
                 true
             }
         }
@@ -103,8 +99,6 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
                 fallback.setOnPreferenceChangeListener { _, value ->
                     DiracState.setBiquadFallback(context, value as Boolean)
                     DiracQemEffect.apply(context)
-                    // The width row drives the host stage this switch gates.
-                    sumDiffPreference?.refresh()
                     true
                 }
             }
@@ -138,7 +132,6 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
         }
 
         previewPreference = findPreference(KEY_EQ_PREVIEW)
-        sumDiffPreference = findPreference(KEY_SUMDIFF)
 
         findPreference<EqBoardPreference>(KEY_EQ_BOARD)?.let { board ->
             board.onBandChanged = { _, _ ->
@@ -180,15 +173,13 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
 
     /**
      * Re-reads every row whose state follows the live output or the master
-     * switch: the headset model, and the stereo-width row, which is inert only
-     * where no Dirac layer owns the width.
+     * switch: the headset model.
      */
     private fun refreshRouteRows() {
         if (!isAdded) {
             return
         }
         refreshModelPreference()
-        sumDiffPreference?.refresh()
     }
 
     /**
@@ -216,6 +207,5 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
         const val KEY_STYLE = "dirac_style"
         const val KEY_EQ_PREVIEW = "dirac_eq_preview"
         const val KEY_EQ_BOARD = "dirac_eq_board"
-        const val KEY_SUMDIFF = "dirac_sumdiff"
     }
 }

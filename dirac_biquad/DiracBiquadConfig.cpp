@@ -86,25 +86,6 @@ double ParseVolumeDb(const char *value) {
     return parsed;
 }
 
-// The 0..2 width, with anything unparseable or out of range mapped into it. The
-// bound is this stage's own: the conf holds what the app wrote and the DSP frame
-// carried, and the host brightness stage clamps its side gain at 1.0 by itself,
-// so nothing here needs to saturate the wider value first.
-float ParseSumDiff(const char *value) {
-    char *end = nullptr;
-    const float parsed = strtof(value, &end);
-    if (end == value || *end != '\0' || !isfinite(parsed)) {
-        return 0.0f;
-    }
-    if (parsed < 0.0f) {
-        return 0.0f;
-    }
-    if (parsed > 2.0f) {
-        return 2.0f;
-    }
-    return parsed;
-}
-
 }  // namespace
 
 const char *DiracBiquadConfig::ConfigPath() {
@@ -112,7 +93,7 @@ const char *DiracBiquadConfig::ConfigPath() {
 }
 
 void DiracBiquadConfig::Fallback(int gainsHalfDb[kBandCount], bool *enabled,
-                               bool *fallback, float *sumdiff, double *volumeDb) {
+                               bool *fallback, double *volumeDb) {
     for (size_t i = 0; i < kBandCount; ++i) {
         gainsHalfDb[i] = kFallbackGains[i];
     }
@@ -122,16 +103,13 @@ void DiracBiquadConfig::Fallback(int gainsHalfDb[kBandCount], bool *enabled,
     if (fallback != nullptr) {
         *fallback = false;
     }
-    if (sumdiff != nullptr) {
-        *sumdiff = 0.0f;
-    }
     if (volumeDb != nullptr) {
         *volumeDb = kUnknownVolumeDb;
     }
 }
 
 bool DiracBiquadConfig::Load(int gainsHalfDb[kBandCount], bool *enabled, bool *fallback,
-                             float *sumdiff, double *volumeDb, int *errorCode) {
+                             double *volumeDb, int *errorCode) {
     if (errorCode != nullptr) {
         *errorCode = 0;
     }
@@ -139,7 +117,6 @@ bool DiracBiquadConfig::Load(int gainsHalfDb[kBandCount], bool *enabled, bool *f
     int gains[kBandCount] = {};
     bool parsedEnabled = kFallbackEnabled;
     bool parsedFallback = false;
-    float parsedSumdiff = 0.0f;
     bool haveEnabled = false;
     bool haveBands = false;
     double parsedVolumeDb = kUnknownVolumeDb;
@@ -171,8 +148,6 @@ bool DiracBiquadConfig::Load(int gainsHalfDb[kBandCount], bool *enabled, bool *f
             haveEnabled = true;
         } else if (strcmp(key, "fallback") == 0) {
             parsedFallback = strtol(value, nullptr, 10) != 0;
-        } else if (strcmp(key, "sumdiff") == 0) {
-            parsedSumdiff = ParseSumDiff(value);
         } else if (strcmp(key, "bands") == 0) {
             haveBands = ParseBands(value, gains);
         } else if (strcmp(key, "volume_db") == 0) {
@@ -205,9 +180,6 @@ bool DiracBiquadConfig::Load(int gainsHalfDb[kBandCount], bool *enabled, bool *f
     }
     if (fallback != nullptr) {
         *fallback = parsedFallback;
-    }
-    if (sumdiff != nullptr) {
-        *sumdiff = parsedSumdiff;
     }
     if (volumeDb != nullptr) {
         *volumeDb = parsedVolumeDb;

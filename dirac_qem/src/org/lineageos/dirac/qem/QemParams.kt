@@ -59,19 +59,6 @@ object QemParams {
     }
     val SFX_ENABLE = Spec(QemProtocol.PARAM_SFX_ENABLE) { QemProtocol.intPayload(1) }
 
-    /**
-     * The Sum/Diff width is the one parameter the ACDB LUT does not carry, so it
-     * is the one frame sent raw: cal_caltype=0 makes the ADM reject it with
-     * ADSP_EBADPARAM from ADM_CMD_SET_PP_PARAMS, while cal_caltype=1 bypasses
-     * the lookup and the same frame is accepted.
-     */
-    val SUMDIFF = Spec(QemProtocol.PARAM_SUMDIFF, QemProtocol.CALTYPE_RAW) {
-        QemProtocol.floatPayload(DiracState.sumDiff(it))
-    }
-    val SUMDIFF_OFF = Spec(QemProtocol.PARAM_SUMDIFF, QemProtocol.CALTYPE_RAW) {
-        QemProtocol.floatPayload(QemProtocol.SUMDIFF_OFF)
-    }
-
     val LOUDNESS = Spec(QemProtocol.PARAM_SCALAR_BASE + SCALAR_LOUDNESS) { context ->
         QemProtocol.scalarPayload(SCALAR_LOUDNESS,
             if (DiracState.isBluetoothConnected(context)) BT_LOUDNESS else DEFAULT_LOUDNESS)
@@ -87,7 +74,7 @@ object QemParams {
     }
 
     /** The enable pass, in the order the module expects it. */
-    val ENABLE_SET = listOf(ENABLE, EQ_ENABLE, EQ_BANDS, SFX_ENABLE, SUMDIFF, LOUDNESS)
+    val ENABLE_SET = listOf(ENABLE, EQ_ENABLE, EQ_BANDS, SFX_ENABLE, LOUDNESS)
 
     /** The two headset-only parameters, written only on the external route. */
     val HDSOUND_SET = listOf(HDSOUND_ENABLE, HDSOUND_FILTERIDX)

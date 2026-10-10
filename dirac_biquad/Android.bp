@@ -23,7 +23,6 @@ cc_library_shared {
         "EffectDiracBiquad.cpp",
         "LoudnessTilt.cpp",
         "SoftClip.cpp",
-        "StereoWidth.cpp",
     ],
 
     header_libs: [

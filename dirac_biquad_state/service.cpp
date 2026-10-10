@@ -37,10 +37,10 @@ constexpr const char *kServiceName = "dirac_biquad_state";
 
 class DiracBiquadStateService : public BnDiracBiquadState {
   public:
-    ndk::ScopedAStatus setState(bool enabled, bool fallback, float sumdiff,
+    ndk::ScopedAStatus setState(bool enabled, bool fallback,
                                 const std::vector<int32_t> &bandsHalfDb,
                                 double volumeDb) override {
-        if (!conf_.Write(enabled, fallback, sumdiff, bandsHalfDb, volumeDb)) {
+        if (!conf_.Write(enabled, fallback, bandsHalfDb, volumeDb)) {
             return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
         }
         return ndk::ScopedAStatus::ok();
@@ -61,12 +61,6 @@ class DiracBiquadStateService : public BnDiracBiquadState {
     ndk::ScopedAStatus getFallback(bool *_aidl_return) override {
         dirac::DiracBiquadConf::State state;
         *_aidl_return = conf_.GetState(&state) && state.fallback;
-        return ndk::ScopedAStatus::ok();
-    }
-
-    ndk::ScopedAStatus getSumDiff(float *_aidl_return) override {
-        dirac::DiracBiquadConf::State state;
-        *_aidl_return = conf_.GetState(&state) ? state.sumdiff : 0.0f;
         return ndk::ScopedAStatus::ok();
     }
 
