@@ -45,7 +45,8 @@ class DiracBiquadConf {
         double volumeDb = kUnknownVolumeDb;
     };
 
-    // Writes enabled, fallback, the 0..1 mid/side width, the clamped band
+    // Writes enabled, fallback, the mid/side width (0..2; the host stage clamps
+    // its own side gain at 1.0), the clamped band
     // gains and the validated stream attenuation atomically. A call whose
     // serialized content matches the last one is a no-op: no temp file, no
     // rename and no mtime change, so a repeated publish cannot make the effect
