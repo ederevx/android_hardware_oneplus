@@ -119,11 +119,29 @@ object DiracQemEffect {
             SCALAR_TONAL_BALANCE, if (DiracState.isMovie(context)) MOVIE_TONAL_BALANCE else DEFAULT_TONAL_BALANCE))
     }
 
-    /** Pushes the stored Sum/Diff stereo width for the live route. */
+    /**
+     * Publishes the stored Sum/Diff width for the live route. Where the host
+     * stage owns the width this only republishes the effect state, which is
+     * where the width is then applied; the DSP frame goes out only where the
+     * host cannot widen, so one value is never applied twice.
+     */
     fun setSumDiff(context: Context) {
+        if (DiracState.isWideningActive(context)) {
+            DiracState.publish(context)
+            return
+        }
         if (!adspVoiced(context)) {
             return
         }
+        sendSumDiff(context, DiracState.output(context))
+    }
+
+    /**
+     * DEV PROBE: sends the stored width as the raw DSP frame whatever owns the
+     * width, so the instrument can still measure what the ADSP does with it.
+     * Nothing in the shipping paths calls this.
+     */
+    fun probeSumDiff(context: Context) {
         sendSumDiff(context, DiracState.output(context))
     }
 
@@ -207,7 +225,13 @@ object DiracQemEffect {
         sendOp(context, output, QemProtocol.PARAM_EQ_ENABLE, QemProtocol.intPayload(1))
         sendOp(context, output, QemProtocol.PARAM_EQ_BANDS, QemProtocol.eqBandsPayload(bands))
         sendOp(context, output, QemProtocol.PARAM_SFX_ENABLE, QemProtocol.intPayload(1))
-        sendSumDiff(context, output)
+        // Exclusive ownership: the host stage widens wherever it runs, so the
+        // DSP frame is sent only where the host cannot. On the speaker and the
+        // wired jack the host owns the width, which is why the enable set
+        // leaves that one parameter to it.
+        if (!DiracState.isWideningActive(context)) {
+            sendSumDiff(context, output)
+        }
         // The loudness scalar is derived from the live sink, so it rides the
         // pass instead of a route broadcast of its own: the value the DSP holds
         // then always matches the sink, including the return to the default

@@ -282,14 +282,17 @@ object DiracState {
     fun sink(context: Context): DiracRouteResolver.Sink = DiracRouteResolver.sink(context)
 
     /**
-     * Whether the host stage can apply the width on the live sink: it runs only
-     * where the DSP does not voice the output, and only while the software
-     * fallback that carries it is shipped and switched on. Anywhere else the
-     * width row has nothing to act on.
+     * Whether the host stage owns the width on the live sink. The host widens
+     * wherever it runs: as the whole fallback cascade where the DSP does not
+     * voice the sink, and as the width stage alone where it does, because the
+     * module's own Sum/Diff cannot be established from source and the host is
+     * therefore the one owner of the width on every sink. The switch that
+     * extends Dirac to the host sinks still gates the cascade case only, and
+     * the master switch gates both.
      */
     fun isWideningActive(context: Context): Boolean =
-        !sink(context).dspVoiced && isBiquadFallbackAvailable(context) &&
-            isBiquadFallbackEnabled(context)
+        isBiquadFallbackAvailable(context) && isEnabled(context) &&
+            (sink(context).dspVoiced || isBiquadFallbackEnabled(context))
 
     /**
      * Whether the live sink is Bluetooth, which carries its own loudness scalar;

@@ -236,6 +236,42 @@ static bool DiracBiquad_IsDspOutput(audio_devices_t device) {
                       AUDIO_DEVICE_OUT_WIRED_HEADPHONE | AUDIO_DEVICE_OUT_LINE)) != 0;
 }
 
+// What the host stage owns for the current device and state: one owner for the
+// question, consulted once per buffer. The cascade runs where the DSP does not
+// voice the sink and the fallback switch extends Dirac there; the width stage
+// alone runs where the DSP voices the sink, because the module's cross-channel
+// Sum/Diff law is the one part of the tuning a per-channel cascade cannot
+// express and the DSP's own application of it is not reproducible from source.
+// The user's switches gate both cases: enabled, diracEnabled and filterReady
+// are required for either, so the master switch still bypasses everything.
+enum class HostScope {
+    kNone,
+    kWidthOnly,
+    kCascade,
+};
+
+static HostScope DiracBiquad_HostScope(const dirac_biquad_object_t *context) {
+    if (!context->enabled || !context->diracEnabled || !context->filterReady) {
+        return HostScope::kNone;
+    }
+    if (DiracBiquad_IsDspOutput(context->device)) {
+        return HostScope::kWidthOnly;
+    }
+    return context->fallback ? HostScope::kCascade : HostScope::kNone;
+}
+
+static const char *DiracBiquad_ScopeName(HostScope scope) {
+    switch (scope) {
+        case HostScope::kCascade:
+            return "cascade";
+        case HostScope::kWidthOnly:
+            return "width";
+        case HostScope::kNone:
+        default:
+            return "none";
+    }
+}
+
 // Re-parses the QEM state file when its mtime has moved. Called from the
 // process path so a switch toggle takes effect on the next buffer without a
 // device change or an audioserver restart.
@@ -280,8 +316,8 @@ static int32_t DiracBiquad_Process(effect_handle_t self,
 
     // The device is read on every call rather than only when the command
     // arrives, so a device switch mid-stream takes effect on the next buffer.
-    if (!context->enabled || !context->diracEnabled || !context->fallback ||
-        DiracBiquad_IsDspOutput(context->device) || !context->filterReady) {
+    const HostScope scope = DiracBiquad_HostScope(context);
+    if (scope == HostScope::kNone) {
         DiracBiquad_PassThrough(context, inBuffer, outBuffer);
         return 0;
     }
@@ -291,7 +327,9 @@ static int32_t DiracBiquad_Process(effect_handle_t self,
             static_cast<unsigned>(
                     audio_channel_count_from_out_mask(context->config.inputCfg.channels)),
             static_cast<audio_format_t>(context->config.inputCfg.format),
-            context->config.outputCfg.accessMode == EFFECT_BUFFER_ACCESS_ACCUMULATE);
+            context->config.outputCfg.accessMode == EFFECT_BUFFER_ACCESS_ACCUMULATE,
+            scope == HostScope::kCascade ? DiracBiquadFilter::Mode::kCascade
+                                         : DiracBiquadFilter::Mode::kWidthOnly);
     return 0;
 }
 
@@ -375,13 +413,14 @@ static int32_t DiracBiquad_Command(effect_handle_t self,
             const int fd = static_cast<int>(*reinterpret_cast<uint32_t *>(pCmdData));
             dprintf(fd, "Dirac Biquad Filter: state %u enabled %d dirac %d fallback %d sumdiff %.3f"
                     " device %#x dsp %d volume_db=%.1f gains=%d;%d;%d;%d;%d;%d;%d"
-                    " clip_knee %.3f\n",
+                    " clip_knee %.3f own %s\n",
                     context->state, context->enabled, context->diracEnabled, context->fallback,
                     context->sumdiff, context->device, DiracBiquad_IsDspOutput(context->device),
                     context->volumeDb, context->gainsHalfDb[0], context->gainsHalfDb[1],
                     context->gainsHalfDb[2], context->gainsHalfDb[3], context->gainsHalfDb[4],
                     context->gainsHalfDb[5], context->gainsHalfDb[6],
-                    static_cast<double>(SoftClip::kKnee));
+                    static_cast<double>(SoftClip::kKnee),
+                    DiracBiquad_ScopeName(DiracBiquad_HostScope(context)));
             break;
         }
 

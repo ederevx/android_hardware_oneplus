@@ -109,11 +109,22 @@ class DiracBiquadFilter {
 
     void Reset();
 
+    // What the host stage is asked to do for the current sink. The cascade is
+    // the whole chain; the width-only mode runs the cross-channel Sum/Diff
+    // stage and the safety clip that follows it, and nothing else, for sinks
+    // where the DSP already runs the per-channel tuning.
+    enum class Mode {
+        kCascade,
+        kWidthOnly,
+    };
+
     // Applies the curve to an interleaved PCM buffer. `input` and `output` may
     // alias; `accumulate` adds the result to the existing output content, as
-    // EFFECT_BUFFER_ACCESS_ACCUMULATE requires.
+    // EFFECT_BUFFER_ACCESS_ACCUMULATE requires. In kWidthOnly mode nothing
+    // stateful outside the width stage runs: the signature, eq and tilt keep
+    // their state and their response untouched.
     void Process(const void *input, void *output, size_t frameCount, unsigned channelCount,
-                 audio_format_t format, bool accumulate);
+                 audio_format_t format, bool accumulate, Mode mode);
 
   private:
     float ProcessSample(float x, unsigned channel);

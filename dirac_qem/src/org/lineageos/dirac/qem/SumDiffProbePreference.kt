@@ -32,8 +32,10 @@ import com.android.settingslib.widget.NormalPaddingMixin
  * the layers below enforce and the sweep can be read on the device.
  *
  * It drives the same owned width as [SumDiffPreference] - one state, two
- * controls - and reuses that row's layout and slider, so the bar geometry, the
+ * controls - and reuses that row's layout and its slider geometry, so the
  * staged settle and the single write at the settle are the shipping row's own.
+ * The push differs on purpose: [SumDiffProbeSlider] sends the raw DSP frame
+ * even where the host owns the width, which is the whole point of the probe.
  *
  * What the value does above 1.0 is what this control measures: the host stage
  * clamps its side gain at width 1.0 (StereoWidth::SetWidth), so only the ADSP
@@ -45,18 +47,18 @@ class SumDiffProbePreference @JvmOverloads constructor(
     attrs: AttributeSet? = null,
 ) : Preference(context, attrs), NormalPaddingMixin {
 
-    private var bar: HorizontalSlider? = null
+    private var bar: SumDiffProbeSlider? = null
     private var reset: View? = null
     private var valueLabel: TextView? = null
 
     init {
         isSelectable = false
-        layoutResource = R.layout.dirac_sumdiff
+        layoutResource = R.layout.dirac_sumdiff_probe
     }
 
     override fun onBindViewHolder(holder: PreferenceViewHolder) {
         super.onBindViewHolder(holder)
-        bar = holder.itemView.findViewById<HorizontalSlider>(R.id.dirac_sumdiff_slider)?.apply {
+        bar = holder.itemView.findViewById<SumDiffProbeSlider>(R.id.dirac_sumdiff_slider)?.apply {
             setMinMax(0f, DiracState.SUMDIFF_MAX)
             onValueChanged = { value -> showValue(value) }
         }

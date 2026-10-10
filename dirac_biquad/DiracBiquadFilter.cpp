@@ -179,7 +179,8 @@ float DiracBiquadFilter::ProcessSample(float x, unsigned channel) {
 }
 
 void DiracBiquadFilter::Process(const void *input, void *output, size_t frameCount,
-                               unsigned channelCount, audio_format_t format, bool accumulate) {
+                               unsigned channelCount, audio_format_t format, bool accumulate,
+                                 Mode mode) {
     if (!configured_ || input == nullptr || output == nullptr || channelCount == 0 ||
         channelCount > channelCount_) {
         return;
@@ -189,6 +190,7 @@ void DiracBiquadFilter::Process(const void *input, void *output, size_t frameCou
     // pair before either is written; input and output may still alias because
     // each staged value is read before its output slot is written.
     float staged[kMaxChannels];
+    const bool cascade = mode == Mode::kCascade;
 
     switch (format) {
         case AUDIO_FORMAT_PCM_FLOAT: {
@@ -197,7 +199,8 @@ void DiracBiquadFilter::Process(const void *input, void *output, size_t frameCou
             for (size_t frame = 0; frame < frameCount; ++frame) {
                 const size_t base = frame * channelCount;
                 for (unsigned ch = 0; ch < channelCount; ++ch) {
-                    staged[ch] = ProcessSample(in[base + ch], ch);
+                    const float x = in[base + ch];
+                    staged[ch] = cascade ? ProcessSample(x, ch) : x;
                 }
                 width_.ProcessFrame(staged, channelCount);
                 for (unsigned ch = 0; ch < channelCount; ++ch) {
@@ -216,7 +219,8 @@ void DiracBiquadFilter::Process(const void *input, void *output, size_t frameCou
             for (size_t frame = 0; frame < frameCount; ++frame) {
                 const size_t base = frame * channelCount;
                 for (unsigned ch = 0; ch < channelCount; ++ch) {
-                    staged[ch] = ProcessSample(static_cast<float>(in[base + ch]) / 32768.0f, ch);
+                    const float x = static_cast<float>(in[base + ch]) / 32768.0f;
+                    staged[ch] = cascade ? ProcessSample(x, ch) : x;
                 }
                 width_.ProcessFrame(staged, channelCount);
                 for (unsigned ch = 0; ch < channelCount; ++ch) {
