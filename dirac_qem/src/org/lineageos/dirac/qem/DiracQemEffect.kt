@@ -41,9 +41,7 @@ import java.util.concurrent.atomic.AtomicReference
  */
 object DiracQemEffect {
     private const val TAG_BANDS = "DiracQemBands"
-
-    private const val SCALAR_TONAL_BALANCE = 3
-    private const val SCALAR_LOUDNESS = 4
+    private const val TAG_PROBE = "DiracQemProbe"
 
     /**
      * The one ordered thread every HAL push runs on, and the one slot that holds
@@ -104,7 +102,7 @@ object DiracQemEffect {
         val started = System.nanoTime()
         val frames = QemTransport(push.context).send(
             moduleFor(push.route), topoFor(push.route), deviceFor(push.context),
-            QemProtocol.PARAM_EQ_BANDS, QemProtocol.eqBandsPayload(push.bands))
+            QemParams.EQ_BANDS.id, QemProtocol.eqBandsPayload(push.bands))
         // Always on, and on the worker: this is the HAL-side proof, not a
         // frame-level measurement, so it costs the UI thread nothing.
         Log.d(TAG_BANDS, "push route=${push.route} frames=$frames ns=${System.nanoTime() - started}")
@@ -115,8 +113,7 @@ object DiracQemEffect {
         if (!adspVoiced(context)) {
             return
         }
-        send(context, SCALAR_TONAL_BALANCE, QemProtocol.scalarPayload(
-            SCALAR_TONAL_BALANCE, if (DiracState.isMovie(context)) MOVIE_TONAL_BALANCE else DEFAULT_TONAL_BALANCE))
+        sendSpec(context, DiracState.output(context), QemParams.TONAL_BALANCE)
     }
 
     /** Pushes the stored Sum/Diff stereo width for the live route. */
@@ -124,25 +121,36 @@ object DiracQemEffect {
         if (!adspVoiced(context)) {
             return
         }
-        sendSumDiff(context, DiracState.output(context))
+        sendSpec(context, DiracState.output(context), QemParams.SUMDIFF)
+    }
+
+    /** Sends one parameter to the module the live route names, as a full pass does. */
+    private fun sendSpec(context: Context, output: Int, spec: QemParams.Spec) {
+        sendFrame(context, moduleFor(output), topoFor(output), deviceFor(context), spec,
+            QemProtocol.APP_TYPES, QemProtocol.PERSIST, QemProtocol.SAMPLE_RATES)
     }
 
     /**
-     * The Sum/Diff frame is the one param the ACDB LUT does not carry, so it is
-     * sent raw: cal_caltype=0 makes the ADM reject it with ADSP_EBADPARAM from
-     * ADM_CMD_SET_PP_PARAMS, while cal_caltype=1 bypasses the lookup and the
-     * same frame is accepted. Every other frame stays on the ACDB path.
+     * The one place a frame is built: a parameter, the module and topology it
+     * addresses, the platform devices, and the selector fan-out. The pass and
+     * the dev probe differ only in the arguments they pass here, never in how a
+     * frame is composed, so a probe frame carries exactly the bytes a pass frame
+     * for that parameter carries.
      */
-    private fun sendSumDiff(context: Context, output: Int) {
-        sendOp(context, output, QemProtocol.PARAM_SUMDIFF,
-            QemProtocol.floatPayload(DiracState.sumDiff(context)), QemProtocol.CALTYPE_RAW)
-    }
-
-    private fun send(context: Context, key: Int, payload: ByteArray) {
-        val output = DiracState.output(context)
+    private fun sendFrame(
+        context: Context,
+        module: Int,
+        topo: Int,
+        devices: IntArray,
+        spec: QemParams.Spec,
+        appTypes: IntArray,
+        persistValues: IntArray,
+        rates: IntArray,
+    ) {
         QemTransport(context).send(
-            moduleFor(output), topoFor(output), deviceFor(context),
-            QemProtocol.PARAM_SCALAR_BASE + key, payload)
+            module, topo, devices, spec.id, spec.payloadFor(context),
+            appTypes = appTypes, persistValues = persistValues, rates = rates,
+            calType = spec.calType)
     }
 
     /**
@@ -201,45 +209,22 @@ object DiracQemEffect {
         DiracState.setAppliedRoutes(context, routeBit(route))
     }
 
+    /**
+     * The production pass, in the order the module expects: the set [QemParams]
+     * says a route is sent, each frame composed by [sendSpec]. The loudness
+     * scalar rides the pass instead of a route broadcast of its own, so the
+     * value the DSP holds always matches the sink, including the return to the
+     * default loudness when Bluetooth goes away.
+     */
     private fun sendEnable(context: Context, output: Int) {
-        val bands = DiracState.currentBands(context)
-        sendOp(context, output, QemProtocol.PARAM_ENABLE, QemProtocol.intPayload(1))
-        sendOp(context, output, QemProtocol.PARAM_EQ_ENABLE, QemProtocol.intPayload(1))
-        sendOp(context, output, QemProtocol.PARAM_EQ_BANDS, QemProtocol.eqBandsPayload(bands))
-        sendOp(context, output, QemProtocol.PARAM_SFX_ENABLE, QemProtocol.intPayload(1))
-        sendSumDiff(context, output)
-        // The loudness scalar is derived from the live sink, so it rides the
-        // pass instead of a route broadcast of its own: the value the DSP holds
-        // then always matches the sink, including the return to the default
-        // loudness when Bluetooth goes away.
-        sendOp(context, output, QemProtocol.PARAM_SCALAR_BASE + SCALAR_LOUDNESS,
-            QemProtocol.scalarPayload(SCALAR_LOUDNESS,
-                if (DiracState.isBluetoothConnected(context)) BT_LOUDNESS else DEFAULT_LOUDNESS))
-        if (output == DiracState.OUTPUT_EXTERNAL) {
-            sendOp(context, output, QemProtocol.PARAM_HDSOUND_ENABLE, QemProtocol.intPayload(1))
-            sendOp(context, output, QemProtocol.PARAM_HDSOUND_FILTERIDX,
-                QemProtocol.intPayload(DiracState.hdsoundIndex(context)))
+        for (spec in QemParams.productionSet(output)) {
+            sendSpec(context, output, spec)
         }
     }
 
-    private fun sendOp(
-        context: Context,
-        output: Int,
-        param: Int,
-        payload: ByteArray,
-        calType: Int = QemProtocol.CALTYPE_ACDB,
-    ) {
-        QemTransport(context).send(
-            moduleFor(output), topoFor(output), deviceFor(context), param, payload,
-            calType = calType)
-    }
-
     private fun sendDisable(context: Context, output: Int) {
-        QemTransport(context).send(
-            moduleFor(output), topoFor(output), deviceFor(context),
-            QemProtocol.PARAM_ENABLE, QemProtocol.intPayload(0))
-        sendOp(context, output, QemProtocol.PARAM_SUMDIFF,
-            QemProtocol.floatPayload(QemProtocol.SUMDIFF_OFF), QemProtocol.CALTYPE_RAW)
+        sendSpec(context, output, QemParams.ENABLE_OFF)
+        sendSpec(context, output, QemParams.SUMDIFF_OFF)
     }
 
     /**
@@ -272,23 +257,41 @@ object DiracQemEffect {
         intArrayOf(DiracRouteResolver.outputDevice(context))
 
     /**
-     * DEV PROBE: send a single Dirac calibration frame with an explicit
-     * topology (and app type) instead of the constants this app normally uses,
-     * so the topology the live audio stream registered can be identified from
-     * the audio HAL's own log. Touches no stored state: it neither writes a
-     * preference nor uses cal_persist=1, so a wrong candidate cannot leave a
-     * bad persistent calibration behind.
+     * DEV PROBE: what one burst sends. The parameter's own payload and cal type
+     * come from [QemParams], the module from [output], and the platform device
+     * from the live route exactly as a pass takes them; the topology, app type,
+     * rate and parameter set are the caller's, which is the point of a probe and
+     * the one way its addressing can differ from a pass.
      */
-    fun probeCal(context: Context, output: Int, topo: Int, appType: Int, rate: Int) {
-        QemTransport(context).send(
-            moduleFor(output), topo, deviceFor(context), QemProtocol.PARAM_ENABLE,
-            QemProtocol.intPayload(1),
-            appTypes = intArrayOf(appType), persistValues = intArrayOf(0),
-            rates = intArrayOf(rate))
-    }
+    class Probe(
+        val output: Int,
+        val topo: Int,
+        val appType: Int,
+        val rate: Int,
+        val params: List<QemParams.Spec>,
+        val repeats: Int = 1,
+    )
 
-    private const val MOVIE_TONAL_BALANCE = -1.0f
-    private const val DEFAULT_TONAL_BALANCE = 0.0f
-    private const val BT_LOUDNESS = -1.0f
-    private const val DEFAULT_LOUDNESS = 0.0f
+    /**
+     * DEV PROBE: one burst of [override]'s parameters, each composed by
+     * [sendFrame]. It holds no state and does not run the pass, so a concurrent
+     * production [apply] is untouched; the stored values are read through the
+     * same payload rules production uses, not written here.
+     */
+    fun probe(context: Context, override: Probe) {
+        val frames = override.repeats.coerceAtLeast(1)
+        val devices = deviceFor(context)
+        for (repeat in 1..frames) {
+            for (spec in override.params) {
+                // Logged BEFORE the frame so the loader's answers line up with
+                // the frame that produced them.
+                Log.i(TAG_PROBE, ("probe frame topo=0x%x apptype=%d rate=%d output=%d devid=%d" +
+                    " param=0x%x caltype=%d repeat=%d/%d").format(
+                    override.topo, override.appType, override.rate, override.output, devices.first(),
+                    spec.id, spec.calType, repeat, frames))
+                sendFrame(context, moduleFor(override.output), override.topo, devices, spec,
+                    intArrayOf(override.appType), intArrayOf(0), intArrayOf(override.rate))
+            }
+        }
+    }
 }
