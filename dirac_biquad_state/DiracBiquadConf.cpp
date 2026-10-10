@@ -57,12 +57,17 @@ double ClampVolumeDb(double volumeDb) {
     return std::min(volumeDb, kMaxVolumeDb);
 }
 
-// The 0..1 width; a non-finite or negative value is the bypass.
+// The width the app may publish; a non-finite or negative value is the bypass.
+// The state admits the probe control's range, so a sweep past the 1.0 the host
+// stage itself clamps at stays visible in this file and in the effect's dump;
+// the effect still clamps its own side gain at 1.0.
+constexpr float kMaxSumDiff = 2.0f;
+
 float ClampSumDiff(float sumdiff) {
     if (!std::isfinite(sumdiff) || sumdiff <= 0.0f) {
         return 0.0f;
     }
-    return std::min(sumdiff, 1.0f);
+    return std::min(sumdiff, kMaxSumDiff);
 }
 
 std::string Format(const DiracBiquadConf::State &state) {

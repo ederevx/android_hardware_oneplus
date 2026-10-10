@@ -11,4 +11,7 @@
       no dependency of any kind on the effect module.
     -->
     <bool name="config_dirac_biquad_fallback_available">false</bool>
+    <!-- DEV PROBE: shows the Sum/Diff probe row that sweeps past the
+         enforced range. Off in shipping builds. -->
+    <bool name="config_dirac_sumdiff_probe">false</bool>
 </resources>

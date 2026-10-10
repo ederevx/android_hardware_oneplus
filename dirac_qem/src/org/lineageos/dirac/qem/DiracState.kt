@@ -73,6 +73,15 @@ object DiracState {
      */
     const val SUMDIFF_DEFAULT = 0.5f
 
+    /**
+     * The widest width this state stores. The shipping row's own range stops at
+     * 1.0; the room above it exists for the probe control, which sweeps past the
+     * limit the layers below enforce so the device can show where each of them
+     * saturates. The host stage clamps anything above 1.0 to its own maximum
+     * side gain, and only the ADSP frame carries the value further.
+     */
+    const val SUMDIFF_MAX = 2.0f
+
     /** The loudness law is flat past this; it only bounds a mute. */
     private const val MAX_VOLUME_DB = 120.0
 
@@ -212,7 +221,7 @@ object DiracState {
     fun setSumDiff(context: Context, value: Float): Boolean {
         ensureLoaded(context)
         val quantized =
-            (value.coerceIn(0.0f, 1.0f) * SUMDIFF_STEPS).roundToInt() / SUMDIFF_STEPS
+            (value.coerceIn(0.0f, SUMDIFF_MAX) * SUMDIFF_STEPS).roundToInt() / SUMDIFF_STEPS
         if (quantized == sumdiff) {
             return false
         }

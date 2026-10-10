@@ -54,4 +54,11 @@
          fallback switch to be present or enabled. -->
     <org.lineageos.dirac.qem.SumDiffPreference
         android:key="dirac_sumdiff" />
+
+    <!-- DEV PROBE: the same width state with the range widened past the limit
+         the layers below enforce and without the route gate, so a sweep above
+         1.0 is possible on any sink. The fragment removes this row unless
+         config_dirac_sumdiff_probe is true. -->
+    <org.lineageos.dirac.qem.SumDiffProbePreference
+        android:key="dirac_sumdiff_probe" />
 </PreferenceScreen>
