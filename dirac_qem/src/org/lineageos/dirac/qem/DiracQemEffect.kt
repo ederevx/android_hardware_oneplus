@@ -127,7 +127,7 @@ object DiracQemEffect {
      */
     fun setSumDiff(context: Context) {
         if (DiracState.isWideningActive(context)) {
-            DiracState.publish(context)
+            publishOwnership(context, DiracState.output(context))
             return
         }
         if (!adspVoiced(context)) {
@@ -181,14 +181,7 @@ object DiracQemEffect {
         // told it changed; the frames below then reuse the route it resolves.
         DiracState.refreshRoute(context)
         val route = DiracState.output(context)
-        // Exclusivity is mechanical, never inferred: before the state that hands
-        // the width to the host is published, the DSP's own value is cleared, so
-        // the DSP contributes nothing even if it is applying that parameter. The
-        // order is load-bearing - clear, then hand over.
-        if (adspVoiced(context) && DiracState.isWideningActive(context)) {
-            clearSumDiff(context, route)
-        }
-        DiracState.publish(context)
+        publishOwnership(context, route)
         // On the host-owned sink no Dirac topology has a live stream, so both
         // the enable set and the disable frames could only fail there. The host
         // effect carries the state on that sink, and was published above.
@@ -273,9 +266,29 @@ object DiracQemEffect {
     }
 
     /**
+     * The one path that changes width ownership. When the host owns the width on
+     * a sink the DSP voices, the DSP's own value is cleared first and only then
+     * is the state that hands the width over published, so the pass cannot leave
+     * both owners applying. Serialized, because a pass runs from the boot
+     * receiver, the route service, the state receiver and the settings callbacks,
+     * and two of them must not interleave their clear and their publish.
+     *
+     * Residual risk, accepted and stated rather than papered over: the clear is
+     * a fire-and-forget HAL set_parameters with no acknowledgement, so a clear
+     * that the HAL drops cannot be observed while the ownership write still
+     * lands. That is best effort, not a guarantee.
+     */
+    @Synchronized
+    private fun publishOwnership(context: Context, route: Int) {
+        if (adspVoiced(context) && DiracState.isWideningActive(context)) {
+            clearSumDiff(context, route)
+        }
+        DiracState.publish(context)
+    }
+
+    /**
      * Clears the DSP's own width value. One implementation, used by the disable
-     * path and by the handover to the host, which is the exclusivity rule: clear
-     * the DSP first, then hand the width over.
+     * path and by the handover to the host.
      */
     private fun clearSumDiff(context: Context, output: Int) {
         sendOp(context, output, QemProtocol.PARAM_SUMDIFF,

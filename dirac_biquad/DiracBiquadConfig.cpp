@@ -121,7 +121,9 @@ void DiracBiquadConfig::Fallback(int gainsHalfDb[kBandCount], bool *enabled,
         *fallback = false;
     }
     if (widthOwnerHost != nullptr) {
-        *widthOwnerHost = false;
+        // Same reason as the parse default: the baked fallback is meant to be
+        // usable standalone, and the host is the owner whose behaviour is here.
+        *widthOwnerHost = true;
     }
     if (sumdiff != nullptr) {
         *sumdiff = 0.0f;
@@ -142,7 +144,10 @@ bool DiracBiquadConfig::Load(int gainsHalfDb[kBandCount], bool *enabled, bool *f
     bool parsedEnabled = kFallbackEnabled;
     bool parsedFallback = false;
     float parsedSumdiff = 0.0f;
-    bool parsedWidthOwnerHost = false;
+    // A file without the field predates it, and the app may be suppressing its
+    // own DSP frame on the strength of it, so the default is the host: an absent
+    // field must never leave the width owned by nobody.
+    bool parsedWidthOwnerHost = true;
     bool haveEnabled = false;
     bool haveBands = false;
     double parsedVolumeDb = kUnknownVolumeDb;
