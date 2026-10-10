@@ -1,0 +1,43 @@
+// Host-side filter for the outputs the Dirac DSP does not voice.
+//
+// Dirac is an ADSP module on this platform, registered for the speaker and the
+// headset only, and those two are voiced by the ADSP: this effect passes through
+// on them. Every other output bypasses the ADM and is ours - Bluetooth A2DP, the
+// remote submix Android Auto uses, USB, and the rest - so voice those here.
+//
+// Legacy soundfx library, not an AIDL effect service: the effects HAL on this
+// device is android.hardware.audio.effect@6.0, which loads soundfx shared
+// libraries.
+cc_library_shared {
+    name: "libdirac_biquad",
+
+    owner: "oneplus",
+    vendor: true,
+    relative_install_path: "soundfx",
+
+    srcs: [
+        "Biquad.cpp",
+        "DiracBiquadConfig.cpp",
+        "DiracBiquadTable.cpp",
+        "DiracBiquadFilter.cpp",
+        "EffectDiracBiquad.cpp",
+        "LoudnessTilt.cpp",
+        "SoftClip.cpp",
+    ],
+
+    header_libs: [
+        "libaudio_system_headers",
+        "libhardware_headers",
+    ],
+
+    shared_libs: [
+        "libcutils",
+        "liblog",
+    ],
+
+    cflags: [
+        "-Wall",
+        "-Werror",
+        "-fvisibility=hidden",
+    ],
+}
