@@ -30,7 +30,6 @@ object QemProtocol {
     const val TOPO_INTERNAL = 0x10012D00
     const val TOPO_EXTERNAL = 0x10012D01
 
-    val DEVICES_INTERNAL = intArrayOf(2)
     /**
      * The application types every push covers, in full.
      *
@@ -109,28 +108,28 @@ object QemProtocol {
         Base64.encodeToString(data, Base64.NO_WRAP)
 
     /**
-     * The HAL resolves cal_devid through its own output routing and overwrites
-     * the cal_snddevid it just parsed, so a frame may carry either the audio
-     * device (resolved for us) or an explicit sound device, never both.
+     * A frame names the platform audio device in cal_devid and no
+     * cal_snddevid. set_audiocal() in the HAL this ROM builds
+     * (hardware/qcom-caf/sdm660/audio/hal/msm8974/platform.c:8242-8264) resolves cal_devid
+     * through its own output routing into its own sound device, and it runs
+     * that resolution only for a non-zero cal_devid: a frame carrying 0 leaves
+     * the sound device unset, fails the HAL's ACDB id lookup and is dropped
+     * before the calibration loader. Naming an explicit cal_snddevid instead
+     * would make the app reproduce a mapping the HAL already owns, including
+     * its rate-dependent cases.
      */
     fun setString(
         topo: Int,
         appType: Int,
         persist: Int,
         device: Int,
-        sndDevId: Int,
         sampleRate: Int,
         data: ByteArray,
         calType: Int = CALTYPE_ACDB,
-    ): String {
-        val selectors = if (sndDevId > 0) {
-            "cal_devid=0;cal_snddevid=$sndDevId"
-        } else {
-            "cal_devid=$device"
-        }
-        return "cal_caltype=$calType;cal_topoid=$topo;cal_apptype=$appType;cal_persist=$persist;" +
-            "$selectors;cal_samplerate=$sampleRate;cal_data=${encode(data)}"
-    }
+    ): String =
+        "cal_caltype=$calType;cal_topoid=$topo;cal_apptype=$appType;cal_persist=$persist;" +
+            "cal_devid=$device;cal_samplerate=$sampleRate;cal_data=${encode(data)}"
+
 
     private const val HEADER_SIZE = 12
     private const val FLOAT_SIZE = 4

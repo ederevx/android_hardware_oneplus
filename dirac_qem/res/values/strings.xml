@@ -12,4 +12,7 @@
     <string name="dirac_sumdiff_reset">Reset stereo width (sum/diff)</string>
     <string name="dirac_sumdiff_value">%1$d%%</string>
     <string name="dirac_sumdiff_unavailable">N/A</string>
+    <!-- DEV PROBE: the Sum/Diff control that sweeps past the enforced range. -->
+    <string name="dirac_sumdiff_probe_title">Sum/Diff probe (0.00-2.00)</string>
+    <string name="dirac_sumdiff_probe_value">%1$.2f</string>
 </resources>

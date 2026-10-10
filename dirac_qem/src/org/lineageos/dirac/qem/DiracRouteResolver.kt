@@ -48,6 +48,19 @@ import android.util.Log
 object DiracRouteResolver {
     private const val TAG = "DiracQemRoute"
     private const val EXTRA_STATE = "state"
+    private const val EXTRA_MICROPHONE = "microphone"
+
+    /**
+     * The platform audio devices the sinks are, as the HAL itself names them
+     * (AUDIO_DEVICE_OUT_*, system/media/audio/include/system/audio-base-utils.h).
+     * A calibration frame carries one of these and the HAL resolves it to its
+     * own sound device and ACDB device, which is the only place that knows
+     * which sound device a given stream needs; the app names no sound device.
+     */
+    private const val AUDIO_DEVICE_OUT_SPEAKER = 0x2
+    private const val AUDIO_DEVICE_OUT_WIRED_HEADSET = 0x4
+    private const val AUDIO_DEVICE_OUT_WIRED_HEADPHONE = 0x8
+    private const val AUDIO_DEVICE_OUT_BLUETOOTH_A2DP = 0x80
 
     private val WIRED_SINK_TYPES = intArrayOf(
         AudioDeviceInfo.TYPE_WIRED_HEADSET,
@@ -87,36 +100,59 @@ object DiracRouteResolver {
     }
 
     /** Reads the live sink. */
-    fun sink(context: Context): Sink {
-        val plugged = wiredPlugged(context)
+    fun sink(context: Context): Sink = route(context).sink
+
+    /**
+     * The platform audio device of the live sink, for the frames that address
+     * it. It comes from the same resolution as [sink], so the sink the app
+     * describes and the device it names can never disagree.
+     */
+    fun outputDevice(context: Context): Int = route(context).audioDevice
+
+    /** The live sink and the platform audio device it is, resolved once. */
+    private class Route(val sink: Sink, val audioDevice: Int)
+
+    private fun route(context: Context): Route {
+        val sticky = stickyJack(context)
+        val plugged = sticky?.getIntExtra(EXTRA_STATE, 0)?.let { it != 0 } ?: false
         val host = !plugged && bluetoothSinkAttached(context)
-        val sink = when {
-            plugged -> Sink.WIRED
-            host -> Sink.HOST
-            else -> Sink.SPEAKER
+        val route = when {
+            plugged -> Route(Sink.WIRED, wiredAudioDevice(sticky))
+            host -> Route(Sink.HOST, AUDIO_DEVICE_OUT_BLUETOOTH_A2DP)
+            else -> Route(Sink.SPEAKER, AUDIO_DEVICE_OUT_SPEAKER)
         }
         // Information, not debug: this is the decision the settings row and the
         // HAL push both follow, and it is cheap only on a route event.
         Log.i(
             TAG,
-            "sink=$sink jack_plugged=$plugged bluetooth_sink=$host " +
-                "wired_available=[${wiredCandidates(context)}]",
+            "sink=${route.sink} device=${route.audioDevice} jack_plugged=$plugged " +
+                "bluetooth_sink=$host wired_available=[${wiredCandidates(context)}]",
         )
-        return sink
+        return route
     }
 
     /**
-     * The jack's own connection signal. A platform that refuses the sticky
-     * read, or has not sent one since boot, leaves the sink unwired, which is
-     * the safe answer for a jack with no known state.
+     * Which wired audio device the jack is. Both resolve to the same platform
+     * sound device, and that resolution belongs to the HAL: a headset with a
+     * microphone is AUDIO_DEVICE_OUT_WIRED_HEADSET, a plain headphone is
+     * AUDIO_DEVICE_OUT_WIRED_HEADPHONE.
      */
-    private fun wiredPlugged(context: Context): Boolean {
-        val sticky = try {
-            context.registerReceiver(null, IntentFilter(Intent.ACTION_HEADSET_PLUG))
-        } catch (e: Exception) {
-            null
-        } ?: return false
-        return sticky.getIntExtra(EXTRA_STATE, 0) != 0
+    private fun wiredAudioDevice(sticky: Intent?): Int =
+        if (sticky?.getBooleanExtra(EXTRA_MICROPHONE, false) == true) {
+            AUDIO_DEVICE_OUT_WIRED_HEADSET
+        } else {
+            AUDIO_DEVICE_OUT_WIRED_HEADPHONE
+        }
+
+    /**
+     * The jack's own connection signal, read once per resolution. A platform
+     * that refuses the sticky read, or has not sent one since boot, leaves the
+     * sink unwired, which is the safe answer for a jack with no known state.
+     */
+    private fun stickyJack(context: Context): Intent? = try {
+        context.registerReceiver(null, IntentFilter(Intent.ACTION_HEADSET_PLUG))
+    } catch (e: Exception) {
+        null
     }
 
     /**

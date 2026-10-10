@@ -91,6 +91,14 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
         // The host-output fallback row exists only when the build ships the
         // dirac_biquad effect. Absent that, the row is removed: no dead
         // preference, no listener, and nothing that would ever be pushed.
+        // The Sum/Diff probe is a development instrument, removed unless the
+        // build turns it on; the shipping row is untouched either way.
+        findPreference<SumDiffProbePreference>(KEY_SUMDIFF_PROBE)?.let { probe ->
+            if (!resources.getBoolean(R.bool.config_dirac_sumdiff_probe)) {
+                preferenceScreen.removePreference(probe)
+            }
+        }
+
         val fallback = findPreference<SwitchPreferenceCompat>(KEY_BIQUAD_FALLBACK)
         if (fallback != null) {
             if (!DiracState.isBiquadFallbackAvailable(context)) {
@@ -210,5 +218,6 @@ class DiracQemSettingsFragment : SettingsBasePreferenceFragment() {
         const val KEY_EQ_PREVIEW = "dirac_eq_preview"
         const val KEY_EQ_BOARD = "dirac_eq_board"
         const val KEY_SUMDIFF = "dirac_sumdiff"
+        const val KEY_SUMDIFF_PROBE = "dirac_sumdiff_probe"
     }
 }
