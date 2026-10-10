@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <com.android.settingslib.widget.MainSwitchPreference
+        android:key="dirac_enable"
+        android:title="@string/dirac_enable_title"
+        android:summary="@string/dirac_enable_summary"
+        android:persistent="false" />
+
+    <!-- Added only when the build ships the dirac_biquad effect; the fragment
+         removes this row when config_dirac_biquad_fallback_available is false.
+         It sits in the same grouped card as the headset model and preset. -->
+    <androidx.preference.SwitchPreferenceCompat
+        android:key="dirac_biquad_fallback"
+        android:title="@string/dirac_biquad_fallback_title"
+        android:summary="@string/dirac_biquad_fallback_summary"
+        android:widgetLayout="@layout/preference_widget_switch_compat"
+        android:persistent="false" />
+
+    <ListPreference
+        android:key="dirac_model"
+        android:title="@string/dirac_model_title"
+        android:summary="%s"
+        android:entries="@array/dirac_model_entries"
+        android:entryValues="@array/dirac_model_values"
+        android:persistent="false" />
+
+    <ListPreference
+        android:key="dirac_style"
+        android:title="@string/dirac_style_title"
+        android:summary="%s"
+        android:entries="@array/dirac_style_entries"
+        android:entryValues="@array/dirac_style_values"
+        android:persistent="false" />
+
+    <PreferenceCategory android:title="@string/dirac_eq_title">
+
+        <org.lineageos.dirac.qem.EqPreviewPreference
+            android:key="dirac_eq_preview" />
+
+        <org.lineageos.dirac.qem.EqBoardPreference
+            android:key="dirac_eq_board" />
+    </PreferenceCategory>
+</PreferenceScreen>

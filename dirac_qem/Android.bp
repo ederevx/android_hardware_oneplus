@@ -1,0 +1,40 @@
+android_app {
+    name: "OnePlusDiracQem",
+
+    srcs: ["src/**/*.kt"],
+    resource_dirs: ["res"],
+
+    certificate: "platform",
+    platform_apis: true,
+    system_ext_specific: true,
+    privileged: true,
+
+    // This app owns the on-device Dirac equalizer, so it replaces AudioFX.
+    overrides: ["AudioFX"],
+
+    // Only the widgets and the theme the screen uses.
+    static_libs: [
+        "org.lineageos.dirac.biquad-java",
+        "SettingsLibCollapsingToolbarBaseActivity",
+        "SettingsLibMainSwitchPreference",
+        "SettingsLibSettingsTheme",
+        "androidx.appcompat_appcompat",
+        "androidx.preference_preference",
+        // Material slider attrs the vertical EQ slider reads.
+        "com.google.android.material_material",
+    ],
+
+    optimize: {
+        proguard_flags_files: ["proguard.flags"],
+    },
+}
+
+// Keeps DiracRouteService alive between plugs; see the sysconfig file.
+prebuilt_etc {
+    name: "OnePlusDiracQemSysconfig",
+
+    src: "sysconfig/org.lineageos.dirac.qem.xml",
+    filename: "org.lineageos.dirac.qem.xml",
+    sub_dir: "sysconfig",
+    system_ext_specific: true,
+}
