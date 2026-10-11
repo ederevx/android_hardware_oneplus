@@ -21,6 +21,7 @@
 
 #include "Biquad.h"
 #include "DiracBiquadTable.h"
+#include "DiracPsfdDynamics.h"
 #include "LoudnessTilt.h"
 #include "SoftClip.h"
 
@@ -65,6 +66,14 @@ bool DiracBiquadFilter::Configure(unsigned sampleRateHz, unsigned channelCount,
 
     preampGain_ = ComputePreampGain(sampleRateHz);
 
+    // The PSFD dynamic range stage runs after the user EQ; it sees the
+    // full-band level rather than the DSP's five-way split, the documented
+    // approximation of this unit.
+    if (!dynamics_.Configure(sampleRateHz, channelCount)) {
+        configured_ = false;
+        return false;
+    }
+
     // The tilt is rebuilt for the new rate; it is not part of the preamp probe.
     tilt_.Configure(sampleRateHz, channelCount);
 
@@ -83,6 +92,7 @@ void DiracBiquadFilter::Reset() {
         }
     }
     tilt_.Reset();
+    dynamics_.Reset();
 }
 
 void DiracBiquadFilter::SetAttenuationDb(double attenuationDb) {
@@ -164,6 +174,7 @@ float DiracBiquadFilter::ProcessSample(float x, unsigned channel) {
     for (size_t band = 0; band < kBandCount; ++band) {
         x = stages_[channel][band].ProcessSample(x);
     }
+    x = dynamics_.ProcessSample(x, channel);
     x = tilt_.ProcessSample(x, channel);
     return x * preampGain_;
 }

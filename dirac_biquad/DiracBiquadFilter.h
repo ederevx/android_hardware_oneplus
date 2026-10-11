@@ -22,6 +22,7 @@
 
 #include "Biquad.h"
 #include "DiracBiquadTable.h"
+#include "DiracPsfdDynamics.h"
 #include "LoudnessTilt.h"
 #include "SoftClip.h"
 
@@ -48,6 +49,11 @@
 // zeroed), the HDSOUND filter index (its data lives in diracvdd.bin), and the
 // pslimiter/safelimiter/timedomainlimiter chain. The preamp below is a static
 // headroom stand-in for those limiters, not a limiter.
+//
+// The DSP's ps3 dynamic range processor is approximated by DiracPsfdDynamics:
+// it reproduces the recovered static gain curve and the module's compiled-in
+// defaults, but its detector sees the full band where the DSP splits five ways,
+// so this remains an approximation and not a portion of the DSP's response.
 //
 // One stage stands in for what this leg cannot have: the clamp became SoftClip,
 // the safelimiter's stand-in, so the cascade's overshoot can no longer modulate
@@ -115,6 +121,7 @@ class DiracBiquadFilter {
 
     Biquad stages_[kMaxChannels][kBandCount];
     Biquad signature_[kMaxChannels][kSignatureCount];
+    DiracPsfdDynamics dynamics_;
     LoudnessTilt tilt_;
     SoftClip clip_;
     float preampGain_ = 1.0f;
