@@ -30,3 +30,13 @@ android_app {
     ],
 
 }
+
+// Keeps DiracRouteService alive between plugs; see the sysconfig file.
+prebuilt_etc {
+    name: "OnePlusDiracQemSysconfig",
+
+    src: "sysconfig/org.lineageos.dirac.qem.xml",
+    filename: "org.lineageos.dirac.qem.xml",
+    sub_dir: "sysconfig",
+    system_ext_specific: true,
+}
