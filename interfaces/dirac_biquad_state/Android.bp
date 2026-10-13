@@ -1,0 +1,26 @@
+//
+// SPDX-FileCopyrightText: 2026 The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+//
+
+// System-visible AIDL for the Dirac biquad fallback state. The settings app
+// (priv_app, system_ext) is the client; a system-side daemon is the server.
+aidl_interface {
+    name: "org.lineageos.dirac.biquad",
+    srcs: ["org/lineageos/dirac/biquad/*.aidl"],
+    owner: "oneplus",
+
+    backend: {
+        java: {
+            enabled: true,
+            platform_apis: true,
+        },
+        ndk: {
+            enabled: true,
+        },
+        cpp: {
+            enabled: false,
+        },
+    },
+    unstable: true,
+}
