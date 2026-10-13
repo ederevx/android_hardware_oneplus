@@ -38,8 +38,15 @@ constexpr float kLevelFloorDb = -120.0f;
 // One-pole coefficient for a windowed update, a = 1 - exp(-1000 / (Q * tau)),
 // where Q is the number of updates per second (rate / window).
 float TimeConstantCoef(unsigned sampleRateHz, unsigned window, float tauMs) {
-    if (sampleRateHz == 0 || window == 0 || tauMs <= 0.0f) {
+    if (sampleRateHz == 0 || window == 0) {
         return 0.0f;
+    }
+    // tau -> 0 is the limit that follows the input immediately; returning 0
+    // here would freeze the pole instead (a zero coefficient keeps the state),
+    // and a stage with one zero and one positive time constant would then be
+    // stuck.
+    if (tauMs <= 0.0f) {
+        return 1.0f;
     }
     const double updatesPerSecond = static_cast<double>(sampleRateHz) / static_cast<double>(window);
     return static_cast<float>(1.0 - std::exp(-kRatePerSecond / (updatesPerSecond * tauMs)));
@@ -83,34 +90,59 @@ void DiracLimiter::Configure(unsigned sampleRateHz, unsigned channelCount, const
 
     delay_.assign(static_cast<size_t>(kMaxChannels) * delaySamples_, 0.0f);
 
-    // The 2x true-peak detector: one fractional phase, evaluated at the
-    // half-sample position. The window is a Hann of half-width 64 samples,
-    // which is nearly flat over the 12-tap support, so the kernel approaches
-    // the truncated ideal sinc; it was the best of a windowed/Kaiser/reference-
-    // matched sweep and beats the narrow Hann by about 1.5-2 dB of true-peak
-    // residual at the same multiply count. Each phase is normalised to unit DC
-    // gain, so a constant input is reproduced at every phase.
+    // The true-peak detector evaluates (P-1) fractional phases at p/P between
+    // samples with a windowed-sinc of L = 2*taps coefficients, so it estimates
+    // the reconstruction between samples and not the samples alone. The window
+    // is a Hann of half-width 64 samples, which is nearly flat over the support
+    // and so approaches the truncated ideal sinc; every phase is normalised to
+    // unit DC gain, so a constant input is reproduced at every phase.
     truePeakTaps_ = params.truePeakTaps;
     if (truePeakTaps_ > kMaxTruePeakTaps) {
         truePeakTaps_ = kMaxTruePeakTaps;
     }
-    truePeakLength_ = 2 * truePeakTaps_;
-    if (truePeakLength_ > 0) {
-        const double center = static_cast<double>(truePeakTaps_ - 1) + 0.5;
-        double unnormalised[2 * kMaxTruePeakTaps] = {};
-        double sum = 0.0;
-        for (unsigned k = 0; k < truePeakLength_; ++k) {
-            const double t = center - static_cast<double>(k);
-            const double sinc = (t == 0.0) ? 1.0
-                                           : std::sin(M_PI * t) / (M_PI * t);
-            const double window = 0.5 * (1.0 + std::cos(M_PI * t / 64.0));
-            unnormalised[k] = sinc * window;
-            sum += unnormalised[k];
+    truePeakPhases_ = params.truePeakPhases;
+    if (truePeakPhases_ > kMaxTruePeakPhases) {
+        truePeakPhases_ = kMaxTruePeakPhases;
+    }
+    if (truePeakPhases_ < 2) {
+        truePeakPhases_ = 0;
+    }
+    // An interpolation computed at sample n spans n-L+1..n, which the delay
+    // line must still hold when the estimate is logged: L-1 <= delaySamples_.
+    // Clamp rather than bypass, so a config that asks for a longer kernel than
+    // the look-ahead keeps a (shallower) ceiling.
+    if (params.hardBound && truePeakTaps_ > 0 && delaySamples_ > 0 &&
+        2 * truePeakTaps_ - 1 > delaySamples_) {
+        truePeakTaps_ = (delaySamples_ + 1) / 2;
+        if (truePeakTaps_ == 0) {
+            truePeakTaps_ = 1;
         }
-        if (sum != 0.0) {
+    }
+    truePeakLength_ = truePeakPhases_ != 0 ? 2 * truePeakTaps_ : 0;
+    std::fill(truePeakCoef_, truePeakCoef_ + kMaxTruePeakPhases * 2 * kMaxTruePeakTaps,
+              0.0f);
+    // One coefficient set per fractional phase p/P, p = 1..P-1; the sample
+    // itself is covered by |x| in the caller. Every phase is normalised to unit
+    // DC gain, so a constant input is reproduced at every phase.
+    if (truePeakLength_ > 0) {
+        double unnormalised[2 * kMaxTruePeakTaps] = {};
+        for (unsigned phase = 1; phase < truePeakPhases_; ++phase) {
+            const double fraction = static_cast<double>(phase) / truePeakPhases_;
+            const double center = static_cast<double>(truePeakTaps_ - 1) + fraction;
+            double sum = 0.0;
             for (unsigned k = 0; k < truePeakLength_; ++k) {
-                const double scaled = unnormalised[k] / sum;
-                truePeakCoef_[k] = static_cast<float>(scaled);
+                const double t = center - static_cast<double>(k);
+                const double sinc = (t == 0.0) ? 1.0
+                                               : std::sin(M_PI * t) / (M_PI * t);
+                const double window = 0.5 * (1.0 + std::cos(M_PI * t / 64.0));
+                unnormalised[k] = sinc * window;
+                sum += unnormalised[k];
+            }
+            float *phaseCoef = truePeakCoef_ + (phase - 1) * truePeakLength_;
+            if (sum != 0.0) {
+                for (unsigned k = 0; k < truePeakLength_; ++k) {
+                    phaseCoef[k] = static_cast<float>(unnormalised[k] / sum);
+                }
             }
         }
     }
@@ -196,13 +228,12 @@ float DiracLimiter::ProcessSample(float x, unsigned channel) {
         const unsigned boundWindow = std::max(delaySamples_, 1u);
         double localPeak = static_cast<double>(std::fabs(x));
         if (truePeakLength_ > 0) {
-            // Interpolate the half-sample position and let the ceiling see it
-            // too, so the bound is on the reconstruction and not only on the
-            // sample. The history ring is mirrored so the tap loop has no wrap
-            // branch, and it is short compared with the block the two-block
-            // maximum below covers, so the departing sample is still counted in
-            // a block whose maximum already includes every half-sample estimate
-            // of its own reconstruction.
+            // Interpolate every fractional phase and let the ceiling see the
+            // largest, so the estimate is of the reconstruction and not only of
+            // the samples. The history ring is mirrored so the tap loop has no
+            // wrap branch. Coverage needs 2*taps-1 <= delaySamples_ (enforced in
+            // Configure): every phase of the interval after x[m] is logged at
+            // the same sample, no later than x[m] leaves the delay line.
             const unsigned length = truePeakLength_;
             env.truePeakHistory[env.truePeakWrite] = x;
             env.truePeakHistory[env.truePeakWrite + length] = x;
@@ -212,13 +243,15 @@ float DiracLimiter::ProcessSample(float x, unsigned channel) {
             }
             env.truePeakWrite = write;
             const float *history = env.truePeakHistory;
-            const float *coefficient = truePeakCoef_;
-            double interpolated = 0.0;
-            for (unsigned k = 0; k < length; ++k) {
-                interpolated += static_cast<double>(coefficient[k]) *
-                                static_cast<double>(history[write + k]);
+            for (unsigned phase = 1; phase < truePeakPhases_; ++phase) {
+                const float *coefficient = truePeakCoef_ + (phase - 1) * length;
+                double interpolated = 0.0;
+                for (unsigned k = 0; k < length; ++k) {
+                    interpolated += static_cast<double>(coefficient[k]) *
+                                    static_cast<double>(history[write + k]);
+                }
+                localPeak = std::max(localPeak, std::fabs(interpolated));
             }
-            localPeak = std::max(localPeak, std::fabs(interpolated));
         }
         env.boundAccumulator = std::max(env.boundAccumulator, localPeak);
         const double boundLevel = std::max(env.boundPrevious, env.boundAccumulator);
@@ -278,11 +311,17 @@ float DiracLimiter::ProcessSample(float x, unsigned channel) {
     const float levelDb = levelValue > 0.0f ? kdbPerLog2_ * std::log2(levelValue) : kLevelFloorDb;
     const float target = TargetDb(levelDb);
 
-    const float released = (1.0f - releaseCoef_) * env.s1 + releaseCoef_ * target;
+    // A zero release or attack time constant is the tau -> 0 limit: that pole
+    // follows its input on the same update. branch explicitly so a stage with
+    // one zero and one positive constant still runs the other pole.
+    const float released = releaseCoef_ >= 1.0f
+                                   ? target
+                                   : (1.0f - releaseCoef_) * env.s1 + releaseCoef_ * target;
     env.s1 = params_.instantAttack ? std::max(target, released) : released;
-    env.s2 += attackCoef_ * (env.s1 - env.s2);
+    env.s2 = attackCoef_ >= 1.0f ? env.s1 : env.s2 + attackCoef_ * (env.s1 - env.s2);
+    const float appliedDb = env.s2;
 
-    const float newGain = std::exp(-env.s2 * kLn10Over20);
+    const float newGain = std::exp(-appliedDb * kLn10Over20);
     env.rampStep = (newGain - env.gain) / static_cast<float>(params_.window);
     env.gain += env.rampStep;
     // Whatever the law asks for, the ceiling wins.

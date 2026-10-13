@@ -50,11 +50,11 @@
 // DiracLimiter: a level stage that clamps the low-frequency energy the curve
 // boosts, and a peak stage after it that bounds what the level stage is too slow
 // to see. Neither stage adds gain, and the peak stage keeps its output at or
-// below its own threshold - with a 2x true-peak refinement of the input its
-// ceiling bounds, so the reconstruction between samples is covered and not only
-// the samples - so the chain needs no static headroom preamp, no clipper and no
-// margin: whatever the signature and the curve ask for, nothing leaves above
-// that stage's threshold.
+// below its own threshold - with a polyphase true-peak estimate of the input
+// its ceiling bounds, so the reconstruction between samples is covered and not
+// only the samples - so the chain needs no static headroom preamp, no clipper
+// and no margin: whatever the signature and the curve ask for, nothing leaves
+// above that stage's threshold.
 //
 // Before the user EQ the chain applies a fixed approximation of one Dirac
 // signature: the FIR response of the hdsound slot 8 filter

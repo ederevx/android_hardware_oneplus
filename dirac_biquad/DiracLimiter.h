@@ -53,9 +53,10 @@
 // so the ceiling only takes over on the transients the law lets through.
 //
 // When the stage configures a true-peak detector, the value that maximum is
-// taken over is max(|x|, |interpolated half-sample value|) rather than |x|
-// alone, so the ceiling bounds the reconstruction between samples and not only
-// the samples themselves. The two-block coverage argument is unchanged.
+// taken over is the largest of |x| and every fractional-phase interpolated
+// value, rather than |x| alone, so the ceiling bounds the reconstruction
+// between samples and not only the samples themselves. The two-block coverage
+// argument is unchanged.
 //
 // The look-ahead belongs to the stage that configures it, so a stage that has
 // none reports no latency and one that has some adds a fixed output delay; the
@@ -64,7 +65,8 @@
 class DiracLimiter {
   public:
     static constexpr unsigned kMaxChannels = 8;
-    static constexpr unsigned kMaxTruePeakTaps = 16;
+    static constexpr unsigned kMaxTruePeakTaps = 32;
+    static constexpr unsigned kMaxTruePeakPhases = 8;
 
     // One stage's configuration. Every field is a property of the stage, so a
     // caller names its stages by what they do rather than by position.
@@ -75,14 +77,15 @@ class DiracLimiter {
         float kneeDb;
         unsigned window;      // detector window, in samples
         bool energyDetector;  // true: mean square; false: per-sample peak
-        float levelMemoryMs;  // one-pole on the detected level; 0 = none
+        float levelMemoryMs;  // one-pole on the detected level; 0 = the tau->0 limit
         float peakHoldMs;     // detector hold; 0 = none
         float releaseMs;
         float attackMs;
         bool instantAttack;
         float lookaheadMs;
         bool hardBound;       // attack jumps straight to the detector's attenuation
-        unsigned truePeakTaps;  // 2x true-peak detector half-length; 0 = off
+        unsigned truePeakTaps;    // true-peak detector half-length (taps per phase); 0 = off
+        unsigned truePeakPhases;  // fractional phases between samples; >=2 enables the detector
     };
 
     // Builds the detector, the smoothing coefficients and the look-ahead ring
@@ -108,6 +111,8 @@ class DiracLimiter {
         double boundAccumulator = 0.0;  // largest input in the current block
         double boundPrevious = 0.0;  // ... and in the one before it
         unsigned boundFill = 0;
+        // (kMaxTruePeakPhases - 1) coefficient sets of 2*taps are read from
+        // this mirrored ring; its size is the largest read, 2*(2*kMaxTaps).
         float truePeakHistory[4 * kMaxTruePeakTaps] = {};  // mirrored ring
         unsigned truePeakWrite = 0;
         float s1 = 0.0f;  // release state, in dB of attenuation
@@ -131,7 +136,9 @@ class DiracLimiter {
     // (zero when the stage has no detector), so a test can compare the table it
     // was built with against the design it was derived from.
     const float *TruePeakCoefficients() const { return truePeakCoef_; }
-    unsigned TruePeakCoefficientCount() const { return truePeakLength_; }
+    unsigned TruePeakCoefficientCount() const {
+        return truePeakPhases_ > 0 ? (truePeakPhases_ - 1) * truePeakLength_ : 0;
+    }
 
   private:
     Envelope channels_[kMaxChannels];
@@ -150,9 +157,10 @@ class DiracLimiter {
     float boundKneeInverse_ = 1.0f;      // 10^(-kneeDb/40)
     unsigned holdSamples_ = 0;
     unsigned delaySamples_ = 0;
-    float truePeakCoef_[2 * kMaxTruePeakTaps] = {};
+    float truePeakCoef_[kMaxTruePeakPhases * 2 * kMaxTruePeakTaps] = {};
     unsigned truePeakTaps_ = 0;
     unsigned truePeakLength_ = 0;
+    unsigned truePeakPhases_ = 0;
     unsigned channelCount_ = 0;
     bool configured_ = false;
 };

@@ -40,57 +40,57 @@ double HalfDbToDb(int halfDb) {
 // configured to bound its own output, so nothing the signature and the curve ask
 // for can carry the chain past that stage's threshold; a fixed attenuation here
 // would only take level away from a chain that is already bounded.
-// The level stage: a slow clamp on the energy the signature and the curve ask
-// for at low frequencies. It measures the mean square over 64 samples and
-// follows it with a two-second one-pole, so it tracks the programme level
-// rather than the waveform, at a -12.5 dBFS threshold and up to 9 dB of
-// attenuation. Its attack is instant and only its release is smoothed, which is
-// what keeps a step from passing for a whole time constant before the clamp
-// engages.
+// The level stage: the recovered safelimiter law, kept at its recovered
+// values. It measures the mean square over a 64-sample window, follows it with
+// a symmetric one-pole in linear power (tau 2000 ms), and maps that level
+// through the dB law at a -12.5 dBFS threshold and up to 9 dB of attenuation;
+// the resulting attenuation is then held by an instant attack and shaped by a
+// release and an attack one-pole (both tau 1000 ms). The kernel's compiled
+// apply path carries all three time constants as immediates, so they are part
+// of the recovered stage and are not ours to drop: removing the level memory
+// was falsified on the host (it turns the stage into a 64-sample waveshaper:
+// the full-scale worst-case bass THD rises from 0.31% to 7.2% and the 1 kHz
+// probe ducking rises from 2.90 dB to 8.35 dB, while keeping the memory and
+// raising only the peak threshold cuts that ducking to 0.99 dB).
+//
+// The two 941 numbers are the only DAR-sourced values: threshold -12.5 dBFS and
+// maximum attenuation 9.0 dB. Their field roles are INFERRED (the blob proves
+// the values and the 9.0-then--12.5 order, not which is which); the literal
+// role swap produces no ducking at all on real programme, so this mapping is
+// the one supported by the observed symptom.
 constexpr DiracLimiter::Params kLevelStage = {
         -12.5f, 9.0f, 1.0f, 1.0e-4f, 64, true, 2000.0f, 0.0f,
-        1000.0f, 1000.0f, true, 0.0f, false, 0u};
+        1000.0f, 1000.0f, true, 0.0f, false, 0u, 0u};
 
-// The peak stage: the bound the chain ends in. A per-sample peak with a 10 ms
-// hold and 8 ms of look-ahead, plus the ceiling a hardBound stage applies, keeps
-// the output at or below its threshold for any input below threshold +
-// maxAttenuation: +47.3 dBFS (231.74 linear) at this stage's -2.70 dBFS
-// threshold, and +45.5 dBFS (188.36 linear) for the landed -4.5 dBFS it
-// replaced (an input at A=298, +49.5 dBFS, already breached that older
-// guarantee). The ceiling is read from the largest input inside the look-ahead,
-// so the sample leaving the delay line is always covered. It only takes over
-// where the tuning would let a transient through, so the tuning itself is
-// unchanged elsewhere. This is one of the two places the chain departs from the
-// tuning it reproduces, and it is deliberate: a safety stage that lets a
-// transient through is not a bound.
+// The peak stage: the recovered pslimiter and the bound the chain ends in. A
+// per-sample peak with a 10 ms hold, a 25 ms release pole, an instant attack, a
+// 6 ms attack pole and 8 ms of look-ahead; the parameters are the recovered 503
+// values, so the threshold is back at -0.5 dBFS with a 50 dB cap. The ceiling a
+// hardBound stage applies keeps the output at or below its threshold for any
+// input below threshold + maxAttenuation. The ceiling is read from the largest
+// input inside the look-ahead, so the sample leaving the delay line is always
+// covered.
+//
+// The threshold alone cannot bound the output: what the ceiling bounds is the
+// sample peak, while a converter reconstructs an overshoot between those
+// samples on broadband material. The ceiling therefore evaluates a true-peak
+// estimate of the input, from a polyphase windowed-sinc detector (wide-Hann
+// half-width 64, P fractional phases at p/P, N taps per phase, every phase
+// normalised to unit DC), and takes the largest |interpolated| value seen in
+// the look-ahead. The estimate's residual r = 16x true peak / detector estimate
+// is threshold-invariant, so the detector design is what lets the recovered
+// -0.5 dBFS threshold hold; P and N are chosen so r stays at or below the
+// inverse ceiling on the 300-seed broadband stress. This detector is our own
+// host-side departure from the blob, whose safelimiter/pslimiter carry no
+// true-peak evaluation at all; the -0.5 dBFS ceiling is the owner requirement.
 //
 // The interpolator carries a group delay, so the ceiling sees the input about
-// N/2 samples late; the effective look-ahead margin is about 384 - N/2 = 378
-// samples at the 12-coefficient kernel (N=12), not the full 384. That is ample
-// here, but a longer kernel eats into it, so the kernel length is bounded by
-// the look-ahead as much as by CPU.
-//
-// The threshold is the second departure, and the reason it is not the recovered
-// -0.5 dBFS. What the ceiling bounds is the sample peak; what a converter
-// reconstructs between those samples overshoots it on broadband material, and
-// no smoothing or clipping moves that. A polyphase true-peak detector (one
-// fractional phase, wide-Hann half-width 64) inside the ceiling path replaces
-// the sample maximum with the interpolated one, so the ceiling bounds the
-// reconstruction rather than the samples. Its residual was measured on 300
-// broadband seeds per rate and gainset at 16x: r = true peak / detector
-// estimate is threshold-invariant, worst r at 44100 Hz, so the threshold is
-// -2.70 dBFS, and 0 of 300 seeds exceed full scale at every rate. Without the
-// detector the same stress needs -5.17 dBFS (44100/zero, 17/300 breaching at
-// the landed -4.5), so the landed -4.5 did not hold for broadband at 44.1/48
-// kHz; tonal and programme-like material alone needed -4.40 dBFS. The detector
-// costs 12 multiply-adds per sample per channel and leaves 1.11 dB of margin
-// on the auditor's seed space (1.13 dB on ours). The gain is not uniform
-// across material: on broadband noise at the zero gainset it is about 0.30 dB
-// worse than the landed -4.5, and it is larger on tonal material. Restoring
-// the recovered reference is this one number.
+// N/2 samples late; the effective look-ahead margin is smaller than the full
+// 8 ms. That is ample here, but a longer kernel eats into it, so the kernel
+// length is bounded by the look-ahead as much as by CPU.
 constexpr DiracLimiter::Params kPeakStage = {
-        -2.7f, 50.0f, 1.0f, 1.0e-4f, 1, false, 0.0f, 10.0f,
-        25.0f, 6.0f, true, 8.0f, true, 6u};
+        -0.5f, 50.0f, 1.0f, 1.0e-4f, 1, false, 0.0f, 10.0f,
+        25.0f, 6.0f, true, 8.0f, true, 16u, 8u};
 
 }  // namespace
 
