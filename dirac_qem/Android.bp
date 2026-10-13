@@ -27,6 +27,8 @@ android_app {
 
     static_libs: [
         "org.lineageos.dirac.biquad-java",
+        "SettingsLibSettingsTheme",
+        "androidx.preference_preference",
         // Material slider attrs the vertical EQ slider reads.
         "com.google.android.material_material",
     ],
