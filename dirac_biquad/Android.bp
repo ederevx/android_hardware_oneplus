@@ -43,6 +43,7 @@ cc_library_shared {
         "DiracCurveDesign.cpp",
         "DiracLimiter.cpp",
         "DiracRoute.cpp",
+        "EffectDiracBiquad.cpp",
     ],
 
     header_libs: [
@@ -51,6 +52,7 @@ cc_library_shared {
     ],
 
     shared_libs: [
+        "libcutils",
         "liblog",
     ],
 
