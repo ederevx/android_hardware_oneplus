@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Copyright (C) 2026 The LineageOS Project
+  Copyright (C) 2026 Edrick Sinsuan <evcsinsuan@gmail.com>
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="org.lineageos.dirac.qem"
+    android:versionCode="1"
+    android:versionName="1.0">
+
+    <application
+        android:label="OnePlusDiracQem"
+        android:icon="@drawable/ic_dirac"
+        android:defaultToDeviceProtectedStorage="true"
+        android:directBootAware="true">
+    </application>
+</manifest>
