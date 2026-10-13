@@ -312,7 +312,7 @@ float DiracLimiter::ProcessSample(float x, unsigned channel) {
     const float target = TargetDb(levelDb);
 
     // A zero release or attack time constant is the tau -> 0 limit: that pole
-    // follows its input on the same update. branch explicitly so a stage with
+    // follows its input on the same update. Branch explicitly so a stage with
     // one zero and one positive constant still runs the other pole.
     const float released = releaseCoef_ >= 1.0f
                                    ? target

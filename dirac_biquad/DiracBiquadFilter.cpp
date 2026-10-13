@@ -80,9 +80,13 @@ constexpr DiracLimiter::Params kLevelStage = {
 // the look-ahead. The estimate's residual r = 16x true peak / detector estimate
 // is threshold-invariant, so the detector design is what lets the recovered
 // -0.5 dBFS threshold hold; P and N are chosen so r stays at or below the
-// inverse ceiling on the 300-seed broadband stress. This detector is our own
-// host-side departure from the blob, whose safelimiter/pslimiter carry no
-// true-peak evaluation at all; the -0.5 dBFS ceiling is the owner requirement.
+// inverse ceiling on the 300-seed broadband stress. With 8 phases and 16 taps
+// the worst output true peak over 300 seeds per rate and gain set at 16x is
+// 0.99374 (48 kHz, zero gains): 0.055 dB of margin, and no NaN. That margin is
+// thin, so a static trim is a separate, owner decision rather than folded in
+// here. This detector is our own host-side departure from the blob, whose
+// safelimiter/pslimiter carry no true-peak evaluation at all; the -0.5 dBFS
+// ceiling is the owner requirement.
 //
 // The interpolator carries a group delay, so the ceiling sees the input about
 // N/2 samples late; the effective look-ahead margin is smaller than the full
