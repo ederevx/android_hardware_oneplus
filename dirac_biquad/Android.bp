@@ -35,6 +35,7 @@ cc_library_shared {
         "Biquad.cpp",
         "DiracBiquadTable.cpp",
         "DiracCurveDesign.cpp",
+        "DiracLimiter.cpp",
     ],
 
     cflags: [
