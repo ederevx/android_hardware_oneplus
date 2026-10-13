@@ -36,8 +36,14 @@ cc_library_shared {
         "DiracBandPlanner.cpp",
         "DiracBandShaper.cpp",
         "DiracBiquadTable.cpp",
+        "DiracBiquadFilter.cpp",
         "DiracCurveDesign.cpp",
         "DiracLimiter.cpp",
+    ],
+
+    header_libs: [
+        "libaudio_system_headers",
+        "libhardware_headers",
     ],
 
     cflags: [
