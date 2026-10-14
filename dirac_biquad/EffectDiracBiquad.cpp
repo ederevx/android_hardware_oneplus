@@ -92,6 +92,10 @@ typedef struct dirac_biquad_object_s {
     // The snapshot generation the chain was last rebuilt from. The mixer thread
     // rebuilds only when the watcher publishes a newer one.
     uint64_t appliedGeneration;
+    // False once a SET_CONFIG has replaced the stream; the next apply then
+    // rebuilds the whole chain. While it holds, an apply may only rebuild the
+    // user EQ, so the limiters keep their state across a live curve update.
+    bool streamConfigured;
     // Owns the only thread that touches the QEM state file. The mixer thread
     // reads a published snapshot and takes no filesystem call.
     DiracBiquadConfigWatcher configWatcher;
@@ -461,10 +465,13 @@ static void DiracBiquad_ApplySnapshot(dirac_biquad_object_t *context, bool force
 
     DiracBiquadConfigSnapshot snapshot;
     const bool haveSnapshot = context->configWatcher.Read(&snapshot);
+    bool gainsChanged = false;
     if (haveSnapshot) {
         if (!force && snapshot.generation == context->appliedGeneration) {
             return;
         }
+        gainsChanged = memcmp(snapshot.gainsHalfDb, context->gainsHalfDb,
+                              sizeof(context->gainsHalfDb)) != 0;
         context->appliedGeneration = snapshot.generation;
         memcpy(context->gainsHalfDb, snapshot.gainsHalfDb, sizeof(context->gainsHalfDb));
         context->diracEnabled = snapshot.diracEnabled;
@@ -475,18 +482,33 @@ static void DiracBiquad_ApplySnapshot(dirac_biquad_object_t *context, bool force
         // state already applied and pick it up on the next call.
         return;
     }
-    // A forced apply with no snapshot in flight still rebuilds the chain below
-    // for the new stream configuration; the gains are the ones already applied
-    // and the watcher's requested reload lands within the poll window.
+    // A forced apply with no snapshot in flight keeps the gains already applied;
+    // the watcher's requested reload lands within the poll window.
 
     const audio_format_t format =
             static_cast<audio_format_t>(context->config.inputCfg.format);
+    if (format != AUDIO_FORMAT_PCM_FLOAT && format != AUDIO_FORMAT_PCM_16_BIT) {
+        context->filterReady = false;
+        context->streamConfigured = false;
+        return;
+    }
+
     const unsigned channelCount = static_cast<unsigned>(
             audio_channel_count_from_out_mask(context->config.inputCfg.channels));
-    context->filterReady =
-            (format == AUDIO_FORMAT_PCM_FLOAT || format == AUDIO_FORMAT_PCM_16_BIT) &&
-            context->filter.Configure(context->config.inputCfg.samplingRate, channelCount,
-                                       context->gainsHalfDb);
+
+    // A stream change rebuilds the whole chain: coefficients, signature and both
+    // limiter stages. Every other apply may rebuild only the user EQ sections,
+    // which leaves the limiter's ring, write index, true-peak history, bound
+    // maxima, envelope and gain in place, so a live curve update does not flush
+    // the look-ahead ring and cut an ~8 ms hole in the stream.
+    if (!context->streamConfigured) {
+        context->filterReady =
+                context->filter.Configure(context->config.inputCfg.samplingRate,
+                                          channelCount, context->gainsHalfDb);
+        context->streamConfigured = context->filterReady;
+    } else if (gainsChanged) {
+        context->filterReady = context->filter.UpdateGains(context->gainsHalfDb);
+    }
     ALOGV("%s: dirac %d fallback %d volume_db %.1f gains %d;%d;%d;%d;%d;%d;%d", __func__,
           context->diracEnabled, context->fallback, context->volumeDb,
           context->gainsHalfDb[0], context->gainsHalfDb[1], context->gainsHalfDb[2],
@@ -502,6 +524,7 @@ static int DiracBiquad_Init(dirac_biquad_module_t *module) {
     module->context.device = AUDIO_DEVICE_NONE;
     module->context.filterReady = false;
     module->context.appliedGeneration = 0;
+    module->context.streamConfigured = false;
     DiracBiquadConfig::Fallback(module->context.gainsHalfDb, &module->context.diracEnabled,
                               &module->context.fallback, &module->context.volumeDb);
     module->context.configWatcher.Start();
@@ -529,6 +552,10 @@ static int DiracBiquad_Configure(dirac_biquad_module_t *module, const effect_con
     memcpy(&context->config, config, sizeof(effect_config_t));
     context->configured = true;
     context->state = DIRAC_BIQUAD_STATE_INITIALIZED;
+
+    // The stream configuration changed, so the next apply must rebuild the
+    // whole chain rather than just the user EQ sections.
+    context->streamConfigured = false;
 
     // Re-read the QEM parity state on every configure. The rate also sets the
     // watcher's poll window, and the request is serviced within it.

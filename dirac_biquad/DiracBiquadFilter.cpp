@@ -174,6 +174,9 @@ bool DiracBiquadFilter::Configure(unsigned sampleRateHz, unsigned channelCount,
         return false;
     }
 
+    channelCount_ = channelCount;
+    sampleRateHz_ = sampleRateHz;
+
     const DiracBiquadSection *signature = DiracBiquadTable::Sections(sampleRateHz);
     for (size_t section = 0; section < kSignatureCount; ++section) {
         for (unsigned ch = 0; ch < channelCount; ++ch) {
@@ -183,13 +186,7 @@ bool DiracBiquadFilter::Configure(unsigned sampleRateHz, unsigned channelCount,
                                                  signature[section].gainDb);
         }
     }
-    for (size_t band = 0; band < kBandCount; ++band) {
-        const double gainDb = HalfDbToDb(gainsHalfDb[band]);
-        for (unsigned ch = 0; ch < channelCount; ++ch) {
-            stages_[ch][band].SetFilter(BiquadType::kPeaking, sampleRateHz,
-                                        kBandCenterHz[band], kBandQ, gainDb);
-        }
-    }
+    SetUserBands(gainsHalfDb);
 
     levelLimiter_.Configure(sampleRateHz, channelCount, kLevelStage);
     peakLimiter_.Configure(sampleRateHz, channelCount, kPeakStage);
@@ -201,8 +198,28 @@ bool DiracBiquadFilter::Configure(unsigned sampleRateHz, unsigned channelCount,
     // curve into the new configuration.
     Reset();
 
-    channelCount_ = channelCount;
     configured_ = true;
+    return true;
+}
+
+void DiracBiquadFilter::SetUserBands(const int gainsHalfDb[kBandCount]) {
+    for (size_t band = 0; band < kBandCount; ++band) {
+        const double gainDb = HalfDbToDb(gainsHalfDb[band]);
+        for (unsigned ch = 0; ch < channelCount_; ++ch) {
+            stages_[ch][band].SetFilter(BiquadType::kPeaking, sampleRateHz_,
+                                        kBandCenterHz[band], kBandQ, gainDb);
+        }
+    }
+}
+
+bool DiracBiquadFilter::UpdateGains(const int gainsHalfDb[kBandCount]) {
+    if (!configured_ || gainsHalfDb == nullptr) {
+        return false;
+    }
+    // Only the user EQ sections are rebuilt. The signature and both limiter
+    // stages keep their coefficients and their memories, so a live curve change
+    // neither allocates nor flushes the look-ahead ring.
+    SetUserBands(gainsHalfDb);
     return true;
 }
 

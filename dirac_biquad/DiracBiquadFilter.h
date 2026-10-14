@@ -99,6 +99,12 @@ class DiracBiquadFilter {
     bool Configure(unsigned sampleRateHz, unsigned channelCount,
                    const int gainsHalfDb[kBandCount]);
 
+    // Rebuilds only the seven user EQ sections for the configured stream, so a
+    // live curve change keeps the signature and both limiter stages (and all
+    // of their state) untouched. Returns false when the chain is not
+    // configured. Allocates nothing.
+    bool UpdateGains(const int gainsHalfDb[kBandCount]);
+
     void Reset();
 
     // Applies the curve to an interleaved PCM buffer. `input` and `output` may
@@ -113,7 +119,11 @@ class DiracBiquadFilter {
     // Clears the two biquad banks of one channel, leaving the limiters alone.
     void ResetBiquads(unsigned channel);
 
+    // Rebuilds the seven user EQ sections from the half-dB gains.
+    void SetUserBands(const int gainsHalfDb[kBandCount]);
+
     Biquad stages_[kMaxChannels][kBandCount];
+    unsigned sampleRateHz_ = 0;
     Biquad signature_[kMaxChannels][kSignatureCount];
     DiracLimiter levelLimiter_;
     DiracLimiter peakLimiter_;
