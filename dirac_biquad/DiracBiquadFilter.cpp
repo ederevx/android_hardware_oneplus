@@ -66,32 +66,33 @@ constexpr DiracLimiter::Params kLevelStage = {
 // per-sample peak with a 10 ms hold, a 25 ms release pole, an instant attack, a
 // 6 ms attack pole and 8 ms of look-ahead; the parameters are the recovered 503
 // values, so the threshold is back at -0.5 dBFS with a 50 dB cap. The ceiling a
-// hardBound stage applies keeps the output at or below its threshold for any
-// input below threshold + maxAttenuation. The ceiling is read from the largest
-// input inside the look-ahead, so the sample leaving the delay line is always
-// covered.
+// hardBound stage applies caps the output sample peak at or below that
+// threshold for any input below threshold + maxAttenuation. The ceiling is read
+// from the largest input inside the look-ahead, so the sample leaving the delay
+// line is always covered.
 //
 // The threshold alone cannot bound the output: what the ceiling bounds is the
 // sample peak, while a converter reconstructs an overshoot between those
 // samples on broadband material. The ceiling therefore evaluates a true-peak
 // estimate of the input, from a polyphase windowed-sinc detector (wide-Hann
-// half-width 64, P fractional phases at p/P, N taps per phase, every phase
-// normalised to unit DC), and takes the largest |interpolated| value seen in
-// the look-ahead. The estimate's residual r = 16x true peak / detector estimate
-// is threshold-invariant, so the detector design is what lets the recovered
-// -0.5 dBFS threshold hold; P and N are chosen so r stays at or below the
-// inverse ceiling on the 300-seed broadband stress. With 8 phases and 16 taps
-// the worst output true peak over 300 seeds per rate and gain set at 16x is
-// 0.99374 (48 kHz, zero gains): 0.055 dB of margin, and no NaN. That margin is
-// thin, so a static trim is a separate, owner decision rather than folded in
-// here. This detector is our own host-side departure from the blob, whose
-// safelimiter/pslimiter carry no true-peak evaluation at all; the -0.5 dBFS
-// ceiling is the owner requirement.
+// half-width 64, P fractional phases at p/P, truePeakTaps coefficients per
+// phase (16), a kernel length of 2*truePeakTaps (32), every phase normalised to
+// unit DC), and takes the largest |interpolated| value seen in the look-ahead.
+//
+// What the hard bound holds exactly, independent of any reconstruction kernel,
+// is that sample-peak cap: on the 1440-record broadband stress the output
+// sample peak measured at worst 0.944066, under the -0.5 dBFS ceiling. The
+// output's true (inter-sample) peak is a kernel-dependent property of the gain
+// path: the same stress cells measured about 0.964 to 1.046 at 16x depending on
+// the reconstruction kernel, so it is not a single number and no true-peak
+// guarantee is claimed. This detector is our own host-side departure from the
+// blob, whose safelimiter/pslimiter carry no true-peak evaluation at all; the
+// -0.5 dBFS ceiling is the owner requirement.
 //
 // The interpolator carries a group delay, so the ceiling sees the input about
-// N/2 samples late; the effective look-ahead margin is smaller than the full
-// 8 ms. That is ample here, but a longer kernel eats into it, so the kernel
-// length is bounded by the look-ahead as much as by CPU.
+// truePeakTaps/2 samples late; the effective look-ahead margin is smaller than
+// the full 8 ms. That is ample here, but a longer kernel eats into it, so the
+// kernel length is bounded by the look-ahead as much as by CPU.
 constexpr DiracLimiter::Params kPeakStage = {
         -0.5f, 50.0f, 1.0f, 1.0e-4f, 1, false, 0.0f, 10.0f,
         25.0f, 6.0f, true, 8.0f, true, 16u, 8u};
