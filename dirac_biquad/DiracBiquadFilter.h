@@ -110,6 +110,9 @@ class DiracBiquadFilter {
   private:
     float ProcessSample(float x, unsigned channel);
 
+    // Clears the two biquad banks of one channel, leaving the limiters alone.
+    void ResetBiquads(unsigned channel);
+
     Biquad stages_[kMaxChannels][kBandCount];
     Biquad signature_[kMaxChannels][kSignatureCount];
     DiracLimiter levelLimiter_;
