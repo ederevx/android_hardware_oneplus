@@ -97,11 +97,14 @@ double HalfDbToDb(int halfDb) {
 // the resulting attenuation is then held by an instant attack and shaped by a
 // release and an attack one-pole (both tau 1000 ms). The kernel's compiled
 // apply path carries all three time constants as immediates, so they are part
-// of the recovered stage and are not ours to drop: removing the level memory
-// was falsified on the host (it turns the stage into a 64-sample waveshaper:
-// the full-scale worst-case bass THD rises from 0.31% to 7.2% and the 1 kHz
-// probe ducking rises from 2.90 dB to 8.35 dB, while keeping the memory and
-// raising only the peak threshold cuts that ducking to 0.99 dB).
+// of the recovered stage and are not ours to drop. The host falsification
+// separates three configurations, none of which is the recovered law. Removing
+// the level memory alone, with this peak stage, keeps the full-scale worst-case
+// bass THD at the parity 0.33% and measures 1.08 dB of 1 kHz probe ducking
+// against a 2.90 dB stock baseline, but shortens the probe recovery from ~4.8 s
+// to ~2.24 s. Pairing that memoryless level stage with the old stock peak stage
+// measures 8.35 dB of ducking at 6.9% THD. Removing the 1000 ms gain pole as
+// well raises the worst-case bass THD to 7.2% at 44.1 kHz and 8.6% at 48 kHz.
 //
 // The two 941 numbers are the only DAR-sourced values: threshold -12.5 dBFS and
 // maximum attenuation 9.0 dB. Their field roles are INFERRED (the blob proves
