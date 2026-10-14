@@ -97,11 +97,14 @@ double HalfDbToDb(int halfDb) {
 // the resulting attenuation is then held by an instant attack and shaped by a
 // release and an attack one-pole (both tau 1000 ms). The kernel's compiled
 // apply path carries all three time constants as immediates, so they are part
-// of the recovered stage and are not ours to drop: removing the level memory
-// was falsified on the host (it turns the stage into a 64-sample waveshaper:
-// the full-scale worst-case bass THD rises from 0.31% to 7.2% and the 1 kHz
-// probe ducking rises from 2.90 dB to 8.35 dB, while keeping the memory and
-// raising only the peak threshold cuts that ducking to 0.99 dB).
+// of the recovered stage and are not ours to drop. The host falsification
+// separates three configurations, none of which is the recovered law. Removing
+// the level memory alone, with this peak stage, keeps the full-scale worst-case
+// bass THD at the parity 0.33% and measures 1.08 dB of 1 kHz probe ducking
+// against a 2.90 dB stock baseline, but shortens the probe recovery from ~4.8 s
+// to ~2.24 s. Pairing that memoryless level stage with the old stock peak stage
+// measures 8.35 dB of ducking at 6.9% THD. Removing the 1000 ms gain pole as
+// well raises the worst-case bass THD to 7.2% at 44.1 kHz and 8.6% at 48 kHz.
 //
 // The two 941 numbers are the only DAR-sourced values: threshold -12.5 dBFS and
 // maximum attenuation 9.0 dB. Their field roles are INFERRED (the blob proves
@@ -125,23 +128,25 @@ constexpr DiracLimiter::Params kLevelStage = {
 // sample peak, while a converter reconstructs an overshoot between those
 // samples on broadband material. The ceiling therefore evaluates a true-peak
 // estimate of the input, from a polyphase windowed-sinc detector (wide-Hann
-// half-width 64, P fractional phases at p/P, N taps per phase, every phase
-// normalised to unit DC), and takes the largest |interpolated| value seen in
-// the look-ahead. The estimate's residual r = 16x true peak / detector estimate
-// is threshold-invariant, so the detector design is what lets the recovered
-// -0.5 dBFS threshold hold; P and N are chosen so r stays at or below the
-// inverse ceiling on the 300-seed broadband stress. With 8 phases and 16 taps
-// the worst output true peak over 300 seeds per rate and gain set at 16x is
+// half-width 64, P fractional phases at p/P, truePeakTaps taps per phase and
+// so a kernel length of 2*truePeakTaps, every phase normalised to unit DC), and
+// takes the largest |interpolated| value seen in the look-ahead. The estimate's
+// residual r = 16x true peak / detector estimate is threshold-invariant, so the
+// detector design is what lets the recovered -0.5 dBFS threshold hold; P and
+// the tap count are chosen so r stays at or below the inverse ceiling on the
+// 300-seed broadband stress. With 8 phases and truePeakTaps 16 (kernel length
+// 32) the worst output true peak over 300 seeds per rate and gain set at 16x is
 // 0.99374 (48 kHz, zero gains): 0.055 dB of margin, and no NaN. That margin is
 // thin, so a static trim is a separate, owner decision rather than folded in
 // here. This detector is our own host-side departure from the blob, whose
 // safelimiter/pslimiter carry no true-peak evaluation at all; the -0.5 dBFS
 // ceiling is the owner requirement.
 //
-// The interpolator carries a group delay, so the ceiling sees the input about
-// N/2 samples late; the effective look-ahead margin is smaller than the full
-// 8 ms. That is ample here, but a longer kernel eats into it, so the kernel
-// length is bounded by the look-ahead as much as by CPU.
+// The interpolator carries a group delay of about half its kernel length, so
+// the ceiling sees the input about truePeakTaps samples late; the effective
+// look-ahead margin is smaller than the full 8 ms. That is ample here, but a
+// longer kernel eats into it, so the kernel length is bounded by the look-ahead
+// as much as by CPU.
 constexpr DiracLimiter::Params kPeakStage = {
         -0.5f, 50.0f, 1.0f, 1.0e-4f, 1, false, 0.0f, 10.0f,
         25.0f, 6.0f, true, 8.0f, true, 16u, 8u};
