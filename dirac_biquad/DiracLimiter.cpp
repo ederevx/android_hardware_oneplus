@@ -196,6 +196,13 @@ float DiracLimiter::BoundGain(double level) const {
 }
 
 float DiracLimiter::ProcessSample(float x, unsigned channel) {
+    // A non-finite input poisons the detector, hold and smoothing state; the
+    // level memory and the attack pole would then keep it forever. Flush it
+    // before the bypass return and before any update. ACCUMULATE can hand one
+    // in from the destination buffer after the cascade.
+    if (!std::isfinite(x)) {
+        x = 0.0f;
+    }
     if (!configured_ || channel >= channelCount_) {
         return x;
     }
@@ -298,7 +305,7 @@ float DiracLimiter::ProcessSample(float x, unsigned channel) {
 
     // Follow the detected level with a one-pole, when the stage asks for one.
     if (levelMemoryCoef_ > 0.0f) {
-        if (!env.levelValid) {
+        if (!env.levelValid || !std::isfinite(env.level)) {
             env.level = windowed;
             env.levelValid = true;
         } else {

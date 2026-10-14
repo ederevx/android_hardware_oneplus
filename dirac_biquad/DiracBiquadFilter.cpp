@@ -158,23 +158,41 @@ bool DiracBiquadFilter::Configure(unsigned sampleRateHz, unsigned channelCount,
 
 void DiracBiquadFilter::Reset() {
     for (unsigned ch = 0; ch < kMaxChannels; ++ch) {
-        for (size_t section = 0; section < kSignatureCount; ++section) {
-            signature_[ch][section].Reset();
-        }
-        for (size_t band = 0; band < kBandCount; ++band) {
-            stages_[ch][band].Reset();
-        }
+        ResetBiquads(ch);
     }
     levelLimiter_.Reset();
     peakLimiter_.Reset();
 }
 
+void DiracBiquadFilter::ResetBiquads(unsigned channel) {
+    for (size_t section = 0; section < kSignatureCount; ++section) {
+        signature_[channel][section].Reset();
+    }
+    for (size_t band = 0; band < kBandCount; ++band) {
+        stages_[channel][band].Reset();
+    }
+}
+
 float DiracBiquadFilter::ProcessSample(float x, unsigned channel) {
+    // A non-finite sample stored in the cascade's IIR state persists there, so
+    // every later output stays non-finite; an ACCUMULATE buffer is one source.
+    // Flush it before it reaches any memory.
+    if (!std::isfinite(x)) {
+        x = 0.0f;
+    }
     for (size_t section = 0; section < kSignatureCount; ++section) {
         x = signature_[channel][section].ProcessSample(x);
     }
     for (size_t band = 0; band < kBandCount; ++band) {
         x = stages_[channel][band].ProcessSample(x);
+    }
+    // The input guard should keep this unreachable, but a coefficient set can
+    // still produce a non-finite value. Recover the offending channel instead
+    // of carrying it into the limiters. This is an emergency flush of that
+    // channel's state, not a smooth operation.
+    if (!std::isfinite(x)) {
+        ResetBiquads(channel);
+        return 0.0f;
     }
     return x;
 }
