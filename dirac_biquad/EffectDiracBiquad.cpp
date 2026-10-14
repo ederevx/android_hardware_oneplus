@@ -37,6 +37,14 @@
 // the module's own dynamics, so a host output cannot sound identical to the
 // wired route.
 //
+// The modelled level stage reaches the signal through the bend plan, and a plan
+// that cannot hold the chain's magnitude limit within its section budget is
+// applied anyway, as the best that budget can do: the peak stage still bounds the
+// sample peak, the watcher logs the shortfall and the dump reports it. Where the
+// designed response violates nothing the plan names no section and the level law
+// applies no attenuation at all, which is a deliberate departure from the
+// broadband level stage this chain ran before the plan existed.
+//
 // Effect order: AudioFlinger applies the stream volume per track in
 // prepareTracks_l (mMasterVolume * track port volume) and runs the output
 // effect chain's process_l() afterwards, so this effect's input is already
@@ -48,6 +56,7 @@
 #define LOG_TAG "dirac_biquad"
 
 #include <errno.h>
+#include <new>
 #include <stdio.h>
 #include <string.h>
 
@@ -138,7 +147,8 @@ static int32_t DiracBiquadLib_GetDescriptor(const effect_uuid_t *uuid,
 static int DiracBiquad_Init(dirac_biquad_module_t *module);
 static int DiracBiquad_Configure(dirac_biquad_module_t *module, const effect_config_t *config);
 static void DiracBiquad_Reset(dirac_biquad_object_t *context);
-static void DiracBiquad_ApplySnapshot(dirac_biquad_object_t *context, bool force);
+static void DiracBiquad_ApplySnapshot(dirac_biquad_object_t *context, bool force,
+                                     bool mayConfigure);
 
 static const struct effect_interface_s gDiracBiquadInterface = {
         DiracBiquad_Process,
@@ -220,13 +230,48 @@ static void DiracBiquad_PassThrough(const dirac_biquad_object_t *context,
 }
 
 // The wired speaker and headset outputs are voiced by the ADSP Dirac topology
-// (ACDB devices 15 and 10), so the host fallback stays out of them. Everything
-// else bypasses the ADM and is ours: Bluetooth A2DP, the remote submix that
-// Android Auto and other projection consumers use, USB, and the rest. The
-// device value is the OR of every patch sink, so the test is a mask.
+// (ACDB devices 15 and 10), so the host chain stays out of them. Everything else
+// bypasses the ADM and is ours: Bluetooth A2DP, the remote submix that Android
+// Auto and other projection consumers use, USB, and the rest.
+//
+// The value the framework hands us may be the OR of several patch sinks, and
+// since Android R an audio device type is an exclusive value that must not be
+// used as a mask - system/media/audio/include/system/audio.h says exactly that on
+// audio_is_output_devices. The two rules cannot both be satisfied by a bit test:
+// AUDIO_DEVICE_OUT_BLE_BROADCAST (0x20000002) carries the speaker's bit and
+// AUDIO_DEVICE_OUT_BLE_SPEAKER (0x20000001) the earpiece's, so a Bluetooth LE
+// route read as a set of sink bits is indistinguishable from a duplicated
+// speaker output. So the test is membership of the DSP set by whole value, using
+// the framework's own audio_is_output_device() for "is this exactly one output
+// type", and anything else - a combination, or an encoding this effect does not
+// know - is left to the DSP. That is the directive's rule too: a route whose
+// Dirac support is unknown must not be voiced here, because voicing a route the
+// ADSP already voices is the failure this gate exists to prevent.
+//
+// The set itself is route data this effect does not own: which ACDB device the
+// ADSP Dirac modules are registered for is a HAL and calibration property. The
+// HAL-published form of it is what this predicate should read once that data
+// exists; until then the set is written out here. It includes the safe-speaker
+// type, which is the same physical speaker reached through the volume limit.
 static bool DiracBiquad_IsDspOutput(audio_devices_t device) {
-    return (device & (AUDIO_DEVICE_OUT_SPEAKER | AUDIO_DEVICE_OUT_WIRED_HEADSET |
-                      AUDIO_DEVICE_OUT_WIRED_HEADPHONE | AUDIO_DEVICE_OUT_LINE)) != 0;
+    static const audio_devices_t kDspDevices[] = {
+            AUDIO_DEVICE_OUT_SPEAKER,
+            AUDIO_DEVICE_OUT_SPEAKER_SAFE,
+            AUDIO_DEVICE_OUT_WIRED_HEADSET,
+            AUDIO_DEVICE_OUT_WIRED_HEADPHONE,
+            AUDIO_DEVICE_OUT_LINE,
+    };
+    for (const audio_devices_t candidate : kDspDevices) {
+        if (device == candidate) {
+            return true;
+        }
+    }
+    // Exactly one output type, and not one of the DSP's: the ADM does not carry
+    // it, so it is ours to voice.
+    if (audio_is_output_device(device)) {
+        return false;
+    }
+    return true;
 }
 
 static int32_t DiracBiquad_Process(effect_handle_t self,
@@ -246,8 +291,10 @@ static int32_t DiracBiquad_Process(effect_handle_t self,
 
     // Apply whatever the watcher has published. Reading the snapshot is
     // lock-free, so the audio deadline never takes a filesystem call; a switch
-    // toggle still flips the fallback without a restart.
-    DiracBiquad_ApplySnapshot(context, /*force=*/false);
+    // toggle still flips the fallback without a restart. The audio path never
+    // builds a stream configuration: that is the command handlers' work and it
+    // allocates.
+    DiracBiquad_ApplySnapshot(context, /*force=*/false, /*mayConfigure=*/false);
 
     // The device is read on every call rather than only when the command
     // arrives, so a device switch mid-stream takes effect on the next buffer.
@@ -320,12 +367,11 @@ static int32_t DiracBiquad_Command(effect_handle_t self,
             context->state = DIRAC_BIQUAD_STATE_ACTIVE;
             // Pick up a toggle made while the effect was disabled.
             context->configWatcher.RequestReload();
-            DiracBiquad_ApplySnapshot(context, /*force=*/true);
+            DiracBiquad_ApplySnapshot(context, /*force=*/true, /*mayConfigure=*/true);
             *reinterpret_cast<int *>(pReplyData) = 0;
             break;
 
         case EFFECT_CMD_SET_DEVICE:
-        case EFFECT_CMD_SET_INPUT_DEVICE:
             if (pCmdData == nullptr || cmdSize != sizeof(uint32_t)) {
                 return -EINVAL;
             }
@@ -334,7 +380,14 @@ static int32_t DiracBiquad_Command(effect_handle_t self,
             // Re-read the QEM parity state on every device change so a host
             // transition picks up the current app setting.
             context->configWatcher.RequestReload();
-            DiracBiquad_ApplySnapshot(context, /*force=*/true);
+            DiracBiquad_ApplySnapshot(context, /*force=*/true, /*mayConfigure=*/true);
+            break;
+
+        case EFFECT_CMD_SET_INPUT_DEVICE:
+            // The input device carries AUDIO_DEVICE_BIT_IN, and folding it into
+            // the device this effect gates on would make an input look like an
+            // output. The host chain gates on the output route alone, so this is
+            // accepted and ignored.
             break;
 
         case EFFECT_CMD_DUMP: {
@@ -342,6 +395,21 @@ static int32_t DiracBiquad_Command(effect_handle_t self,
                 return -EINVAL;
             }
             const int fd = static_cast<int>(*reinterpret_cast<uint32_t *>(pCmdData));
+            dprintf(fd, "Dirac Biquad Filter: bend plan present %d holds_limit %d"
+                    " residual %zu flat_db %.4f applied_flat_db %.4f engaged %zu"
+                    " retiring %zu\n",
+                    context->filter.HasBendPlan(), context->filter.BendPlanHoldsLimit(),
+                    context->filter.BendResidualIntervals(),
+                    context->filter.BendFlatGain() > 0.0f
+                            ? 20.0 * std::log10(
+                                      static_cast<double>(context->filter.BendFlatGain()))
+                            : -120.0,
+                    context->filter.BendAppliedFlatGain() > 0.0f
+                            ? 20.0 * std::log10(static_cast<double>(
+                                      context->filter.BendAppliedFlatGain()))
+                            : -120.0,
+                    context->filter.BendEngagedSections(),
+                    context->filter.BendRetiringSections());
             dprintf(fd, "Dirac Biquad Filter: state %u enabled %d dirac %d fallback %d"
                     " device %#x dsp %d volume_db=%.1f gains=%d;%d;%d;%d;%d;%d;%d"
                     " level_stage_db %.1f/%.1f peak_stage_db %.1f/%.1f\n",
@@ -416,7 +484,14 @@ static int32_t DiracBiquadLib_Create(const effect_uuid_t *uuid,
         return -ENOENT;
     }
 
-    dirac_biquad_module_t *module = new dirac_biquad_module_t{};
+    // The module is built without exceptions, so a failed operator new would
+    // reach std::terminate and take the effects HAL down with it; the context is
+    // the module's only allocation, and a create that cannot have it reports so.
+    dirac_biquad_module_t *module = new (std::nothrow) dirac_biquad_module_t{};
+    if (module == nullptr) {
+        return -ENOMEM;
+    }
+
     module->itfe = &gDiracBiquadInterface;
 
     const int ret = DiracBiquad_Init(module);
@@ -454,8 +529,36 @@ static int32_t DiracBiquadLib_GetDescriptor(const effect_uuid_t *uuid,
     return -EINVAL;
 }
 
-static void DiracBiquad_ApplySnapshot(dirac_biquad_object_t *context, bool force) {
+// Adopts a published plan, or drops whatever plan is in force: a plan that
+// cannot be adopted must not leave the shaper bending a response the curve no
+// longer asks for, and a plan that cannot be adopted is dropped rather than
+// allowed to hold the curve back.
+static void DiracBiquad_ApplyPlan(dirac_biquad_object_t *context, const DiracBandPlan &plan) {
+    if (context->filter.AdoptBendPlan(plan)) {
+        return;
+    }
+    ALOGW("%s: refusing the bend plan for this curve; the level stage stays broadband",
+          __func__);
+    context->filter.ClearBendPlan();
+}
+
+static void DiracBiquad_ApplySnapshot(dirac_biquad_object_t *context, bool force,
+                                     bool mayConfigure) {
     if (!context->configured) {
+        return;
+    }
+    // A stream configuration is built only on the command path, so the audio
+    // path applies what is already built and leaves an unbuilt stream to the
+    // next command. Nothing is marked applied here, so the gains and the plan
+    // arrive together once the build has happened.
+    if (!context->streamConfigured && !mayConfigure) {
+        return;
+    }
+
+    // A publication earns a copy only when it is newer than what has been
+    // applied: the snapshot carries the plan, the audio path reads it on every
+    // process() call, and nothing has to be copied while the state stands still.
+    if (!force && context->configWatcher.SnapshotGeneration() == context->appliedGeneration) {
         return;
     }
 
@@ -466,10 +569,14 @@ static void DiracBiquad_ApplySnapshot(dirac_biquad_object_t *context, bool force
         if (!force && snapshot.generation == context->appliedGeneration) {
             return;
         }
+        // gainsChanged is against the gains still applied: when a curve change
+        // cannot be adopted with its plan the applied pair is held and this
+        // stays true, so the next matching publication retries.
         gainsChanged = memcmp(snapshot.gainsHalfDb, context->gainsHalfDb,
                               sizeof(context->gainsHalfDb)) != 0;
         context->appliedGeneration = snapshot.generation;
-        memcpy(context->gainsHalfDb, snapshot.gainsHalfDb, sizeof(context->gainsHalfDb));
+        // The flags apply unconditionally; the gains apply only together with
+        // their plan, below, so context->gainsHalfDb keeps the applied pair.
         context->diracEnabled = snapshot.diracEnabled;
         context->fallback = snapshot.fallback;
         context->volumeDb = snapshot.volumeDb;
@@ -491,19 +598,54 @@ static void DiracBiquad_ApplySnapshot(dirac_biquad_object_t *context, bool force
 
     const unsigned channelCount = static_cast<unsigned>(
             audio_channel_count_from_out_mask(context->config.inputCfg.channels));
+    const unsigned sampleRateHz = context->config.inputCfg.samplingRate;
+    // Without a snapshot there is no new plan and the gains already applied are
+    // kept; a matching plan can only come from a snapshot.
+    const int *const targetGains = haveSnapshot ? snapshot.gainsHalfDb : context->gainsHalfDb;
+    // A plan may be applied only with the rate and the gains it was built for.
+    // The filter's AdoptBendPlan re-checks both against the rate and gains it has
+    // actually applied, which is the invariant that matters; this check decides
+    // whether the pair can be applied together at all.
+    const bool planMatches =
+            haveSnapshot && snapshot.plan.valid && snapshot.plan.sampleRateHz == sampleRateHz &&
+            memcmp(snapshot.plan.gainsHalfDb, snapshot.gainsHalfDb,
+                   sizeof(snapshot.gainsHalfDb)) == 0;
 
     // A stream change rebuilds the whole chain: coefficients, signature and both
-    // limiter stages. Every other apply may rebuild only the user EQ sections,
-    // which leaves the limiter's ring, write index, true-peak history, bound
-    // maxima, envelope and gain in place, so a live curve update does not flush
-    // the look-ahead ring and cut an ~8 ms hole in the stream.
+    // limiter stages, with no plan (the shaper starts in fallback). Every other
+    // apply may rebuild only the user EQ sections, which leaves the limiter's
+    // ring, write index, true-peak history, bound maxima, envelope and gain in
+    // place, so a live curve update does not flush the look-ahead ring and cut an
+    // ~8 ms hole in the stream.
     if (!context->streamConfigured) {
         context->filterReady =
-                context->filter.Configure(context->config.inputCfg.samplingRate,
-                                          channelCount, context->gainsHalfDb);
+                context->filter.Configure(sampleRateHz, channelCount, targetGains);
         context->streamConfigured = context->filterReady;
+        if (context->filterReady) {
+            memcpy(context->gainsHalfDb, targetGains, sizeof(context->gainsHalfDb));
+            if (planMatches) {
+                context->filter.AdoptBendPlan(snapshot.plan);
+            }
+        }
     } else if (gainsChanged) {
-        context->filterReady = context->filter.UpdateGains(context->gainsHalfDb);
+        // The curve always applies; the plan is what may be refused. Holding the
+        // curve back until a matching plan arrives would strand the user's
+        // setting, because a plan is rebuilt only when the file's gains move
+        // again, and the shortfall is the plan's to report, not the curve's.
+        context->filterReady = context->filter.UpdateGains(targetGains);
+        if (context->filterReady) {
+            memcpy(context->gainsHalfDb, targetGains, sizeof(context->gainsHalfDb));
+        }
+        if (context->filterReady && planMatches) {
+            DiracBiquad_ApplyPlan(context, snapshot.plan);
+        } else if (context->filterReady) {
+            context->filter.ClearBendPlan();
+        }
+    } else if (!context->filter.HasBendPlan() && planMatches) {
+        // The chain is built but has no plan yet - the window after a configure
+        // or a rate change - so adopt the matching plan without touching the
+        // curve.
+        DiracBiquad_ApplyPlan(context, snapshot.plan);
     }
     ALOGV("%s: dirac %d fallback %d volume_db %.1f gains %d;%d;%d;%d;%d;%d;%d", __func__,
           context->diracEnabled, context->fallback, context->volumeDb,
@@ -557,7 +699,7 @@ static int DiracBiquad_Configure(dirac_biquad_module_t *module, const effect_con
     // watcher's poll window, and the request is serviced within it.
     context->configWatcher.SetSampleRate(config->inputCfg.samplingRate);
     context->configWatcher.RequestReload();
-    DiracBiquad_ApplySnapshot(context, /*force=*/true);
+    DiracBiquad_ApplySnapshot(context, /*force=*/true, /*mayConfigure=*/true);
 
     return 0;
 }

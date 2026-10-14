@@ -30,6 +30,34 @@ enum class BiquadType {
     kHighShelf,
 };
 
+// One point on the unit circle, at which a section's response is evaluated. The
+// four values a second-order response needs are computed once per point, so a
+// cascade of sections shares them instead of repeating the transcendentals.
+struct BiquadPoint {
+    double cosW;
+    double sinW;
+    double cos2W;
+    double sin2W;
+};
+
+// A section's complex response at one point.
+struct BiquadResponse {
+    double real;
+    double imaginary;
+};
+
+// One section's coefficients, normalised by a0, as the recursion applies them.
+// These are the whole of a section that a plan needs to carry: the filter state
+// belongs to whoever runs the filter, and a Biquad owns the coefficients it was
+// designed with.
+struct BiquadCoefficients {
+    double b0;
+    double b1;
+    double b2;
+    double a1;
+    double a2;
+};
+
 class Biquad {
   public:
     void Reset();
@@ -47,10 +75,51 @@ class Biquad {
     void SetPrototype(BiquadType type, double sampleRateHz, double cornerHz, double q,
                       double gainDb);
 
+    // Realises one second-order stage of an order-n Butterworth shelf cut: the
+    // shelf whose edge is `cornerHz` and whose gain at full depth is `gainDb`.
+    // Order 2 is one stage; order 4 is two, selected by `stage`, which is the
+    // Butterworth section with factor c = 2 sin((2*stage+1)pi/(2n)) - the two
+    // stages carry different damping, which is what makes the order-4 transition
+    // steeper than any cascade of order-2 shelves.
+    //
+    // The shelf the stages make together is bounded real (|H| <= 1 for a cut at
+    // every frequency), which is the property a bend section needs to be driven
+    // per sample without ever adding gain. One stage alone is not: the
+    // lower-damped one peaks about 0.7 dB, which is harmless because a section
+    // always applies the whole shelf. An unsupported order or stage realises a
+    // pass-through.
+    void SetButterworthShelf(BiquadType type, double sampleRateHz, double cornerHz, double gainDb,
+                             unsigned order, unsigned stage);
+
     float ProcessSample(float x);
+
+    // The unit-circle point for a frequency, and the section's response there;
+    // the chain reasons about the response it is configured with rather than
+    // about a curve it hopes for. Neither is on the sample path.
+    static BiquadPoint PointAt(double sampleRateHz, double frequencyHz);
+    BiquadResponse ResponseAt(const BiquadPoint &point) const;
+
+    // The coefficient set the running filter was designed with, and a plain
+    // replacement for it. Load keeps the filter state: a caller that continues a
+    // section from the samples it has already seen uses this, and one that wants
+    // a fresh section calls Reset explicitly.
+    BiquadCoefficients Coefficients() const;
+    void Load(const BiquadCoefficients &coefficients);
+
+    // Loads a new coefficient set and moves to it over `rampSamples` samples
+    // instead of in one step. A coefficient set changed under live filter state
+    // steps the output by the size of the change; the region of (a1, a2) that a
+    // stable second-order section occupies is convex, so every intermediate set on
+    // the straight line between two stable sets is stable and a ramp is not a
+    // stability risk. `rampSamples` 0 loads immediately, and an immediate load
+    // ends a ramp in progress. A ramp started while another runs continues from
+    // the coefficients in force rather than from the ones the earlier ramp was
+    // heading for, which is what a control being dragged needs. No allocation.
+    void LoadRamped(const BiquadCoefficients &coefficients, unsigned rampSamples);
 
   private:
     void SetCoefficients(BiquadType type, double w0, double q, double gainDb);
+    void StepRamp();
 
     double b0_ = 1.0;
     double b1_ = 0.0;
@@ -62,4 +131,11 @@ class Biquad {
     double x2_ = 0.0;
     double y1_ = 0.0;
     double y2_ = 0.0;
+
+    // The ramp in progress: the set it is heading for, its per-sample step, and
+    // the samples left. Inactive while rampRemaining_ is 0, which is the state of
+    // every filter that was not given a ramp.
+    double target_[5] = {1.0, 0.0, 0.0, 0.0, 0.0};
+    double step_[5] = {0.0, 0.0, 0.0, 0.0, 0.0};
+    unsigned rampRemaining_ = 0;
 };

@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cmath>
 #include <stdint.h>
+#include <string.h>
 
 #if defined(__x86_64__) || defined(__i386__)
 #include <xmmintrin.h>
@@ -27,6 +28,8 @@
 
 #include "Biquad.h"
 #include "DiracBiquadTable.h"
+#include "DiracChainStages.h"
+#include "DiracCurveDesign.h"
 #include "DiracLimiter.h"
 
 namespace {
@@ -76,89 +79,14 @@ class ScopedNoDenormals {
 #endif
 };
 
-// The Dirac equalizer models each band with alpha = sin(w0)/2 (the app's
-// EqCurveView "halfAlpha"), which is the RBJ peaking response at Q = 1.0.
-// Matching that Q, not just the centre, is what makes this the same band shape
-// the curve the app publishes asks for.
-constexpr double kBandQ = 1.0;
-
-double HalfDbToDb(int halfDb) {
-    return static_cast<double>(halfDb) * 0.5;
-}
-
-// No static headroom margin sits in front of the limiters. The peak stage is
-// configured to bound its own output, so nothing the signature and the curve ask
-// for can carry the chain past that stage's threshold; a fixed attenuation here
-// would only take level away from a chain that is already bounded.
-// The level stage: the recovered safelimiter law, kept at its recovered
-// values. It measures the mean square over a 64-sample window, follows it with
-// a symmetric one-pole in linear power (tau 2000 ms), and maps that level
-// through the dB law at a -12.5 dBFS threshold and up to 9 dB of attenuation;
-// the resulting attenuation is then held by an instant attack and shaped by a
-// release and an attack one-pole (both tau 1000 ms). The kernel's compiled
-// apply path carries all three time constants as immediates, so they are part
-// of the recovered stage and are not ours to drop. The host falsification
-// separates three configurations, none of which is the recovered law. Removing
-// the level memory alone, with this peak stage, keeps the full-scale worst-case
-// bass THD at the parity 0.33% and measures 1.08 dB of 1 kHz probe ducking
-// against a 2.90 dB stock baseline, but shortens the probe recovery from ~4.8 s
-// to ~2.24 s. Pairing that memoryless level stage with the old stock peak stage
-// measures 8.35 dB of ducking at 6.9% THD. Removing the 1000 ms gain pole as
-// well raises the worst-case bass THD to 7.2% at 44.1 kHz and 8.6% at 48 kHz.
-//
-// The two 941 numbers are the only DAR-sourced values: threshold -12.5 dBFS and
-// maximum attenuation 9.0 dB. Their field roles are INFERRED (the blob proves
-// the values and the 9.0-then--12.5 order, not which is which); the literal
-// role swap produces no ducking at all on real programme, so this mapping is
-// the one supported by the observed symptom.
-constexpr DiracLimiter::Params kLevelStage = {
-        -12.5f, 9.0f, 1.0f, 1.0e-4f, 64, true, 2000.0f, 0.0f,
-        1000.0f, 1000.0f, true, 0.0f, false, 0u, 0u};
-
-// The peak stage: the recovered pslimiter and the bound the chain ends in. A
-// per-sample peak with a 10 ms hold, a 25 ms release pole, an instant attack, a
-// 6 ms attack pole and 8 ms of look-ahead; the parameters are the recovered 503
-// values, so the threshold is back at -0.5 dBFS with a 50 dB cap. The ceiling a
-// hardBound stage applies caps the output sample peak at the ceiling that
-// threshold computes, for any input below threshold + maxAttenuation. It reads
-// the ceiling from the largest input inside the look-ahead, so the sample
-// leaving the delay line is always covered.
-//
-// The threshold alone cannot bound the output: what the ceiling bounds is the
-// sample peak, while a converter reconstructs an overshoot between those
-// samples on broadband material. The ceiling therefore evaluates a true-peak
-// estimate of the input, from a polyphase windowed-sinc detector (wide-Hann
-// half-width 64, P fractional phases at p/P, truePeakTaps coefficients per
-// phase (16), a kernel length of 2*truePeakTaps (32), every phase normalised to
-// unit DC), and takes the largest |interpolated| value seen in the look-ahead.
-//
-// What the hard bound holds exactly, independent of any reconstruction kernel,
-// is that sample-peak cap: on the 1440-record broadband stress the output
-// sample peak measured at worst 0.944066, under the -0.5 dBFS ceiling. The
-// output's true (inter-sample) peak is a kernel-dependent property of the gain
-// path: the same stress cells measured about 0.964 to 1.046 at 16x depending on
-// the reconstruction kernel, so it is not a single number and no true-peak
-// guarantee is claimed. This detector is our own host-side departure from the
-// blob, whose safelimiter/pslimiter carry no true-peak evaluation at all; the
-// -0.5 dBFS ceiling is the owner requirement.
-//
-// The interpolator carries a group delay of about half its kernel length, so
-// the ceiling sees the input about truePeakTaps samples late; the effective
-// look-ahead margin is smaller than the full 8 ms. That is ample here, but a
-// longer kernel eats into it, so the kernel length is bounded by the look-ahead
-// as much as by CPU.
-constexpr DiracLimiter::Params kPeakStage = {
-        -0.5f, 50.0f, 1.0f, 1.0e-4f, 1, false, 0.0f, 10.0f,
-        25.0f, 6.0f, true, 8.0f, true, 16u, 8u};
-
 }  // namespace
 
 const DiracLimiter::Params &DiracBiquadFilter::LevelStage() {
-    return kLevelStage;
+    return dirac_chain::LevelStage();
 }
 
 const DiracLimiter::Params &DiracBiquadFilter::PeakStage() {
-    return kPeakStage;
+    return dirac_chain::PeakStage();
 }
 
 bool DiracBiquadFilter::Configure(unsigned sampleRateHz, unsigned channelCount,
@@ -181,20 +109,22 @@ bool DiracBiquadFilter::Configure(unsigned sampleRateHz, unsigned channelCount,
 
     channelCount_ = channelCount;
     sampleRateHz_ = sampleRateHz;
+    // A live curve change moves the seven user bands to their new coefficients
+    // over this many samples: 50 ms, the same fade the shaper uses.
+    rampSamples_ = sampleRateHz / 20;
 
-    const DiracBiquadSection *signature = DiracBiquadTable::Sections(sampleRateHz);
-    for (size_t section = 0; section < kSignatureCount; ++section) {
-        for (unsigned ch = 0; ch < channelCount; ++ch) {
-            signature_[ch][section].SetPrototype(signature[section].type, sampleRateHz,
-                                                 signature[section].cornerHz,
-                                                 signature[section].q,
-                                                 signature[section].gainDb);
-        }
+    for (unsigned ch = 0; ch < channelCount; ++ch) {
+        DiracCurveDesign::Signature(sampleRateHz, signature_[ch]);
     }
-    SetUserBands(gainsHalfDb);
+    // A fresh chain loads immediately: its memories are cleared right after, so
+    // there is no running state for a step to disturb.
+    SetUserBands(gainsHalfDb, 0);
 
-    levelLimiter_.Configure(sampleRateHz, channelCount, kLevelStage);
-    peakLimiter_.Configure(sampleRateHz, channelCount, kPeakStage);
+    // The chain build does not depend on the plan: the law, the peak stage and
+    // the coefficients above are what the shaper runs, and the plan is built and
+    // offered afterwards.
+    bandShaper_.Configure(sampleRateHz, channelCount, dirac_chain::LevelStage());
+    peakLimiter_.Configure(sampleRateHz, channelCount, dirac_chain::PeakStage());
 
     // A configured chain is a fresh chain. The coefficients above replace the
     // ones the filters were running with, so the memories behind them belong to
@@ -203,16 +133,34 @@ bool DiracBiquadFilter::Configure(unsigned sampleRateHz, unsigned channelCount,
     // curve into the new configuration.
     Reset();
 
+    // The chain is built with no plan: the shaper starts in fallback (the
+    // recovered level stage), and the plan arrives through AdoptBendPlan once a
+    // published one matches this rate and these gains.
+    memcpy(appliedGainsHalfDb_, gainsHalfDb, sizeof(appliedGainsHalfDb_));
     configured_ = true;
     return true;
 }
 
-void DiracBiquadFilter::SetUserBands(const int gainsHalfDb[kBandCount]) {
-    for (size_t band = 0; band < kBandCount; ++band) {
-        const double gainDb = HalfDbToDb(gainsHalfDb[band]);
-        for (unsigned ch = 0; ch < channelCount_; ++ch) {
-            stages_[ch][band].SetFilter(BiquadType::kPeaking, sampleRateHz_,
-                                        kBandCenterHz[band], kBandQ, gainDb);
+void DiracBiquadFilter::SetUserBands(const int gainsHalfDb[kBandCount], unsigned rampSamples) {
+    // The design is built outside the running sections, so the coefficients the
+    // chain is moving to and the ones it is moving from are separate things.
+    Biquad designed[kBandCount];
+    DiracCurveDesign::UserBands(sampleRateHz_, gainsHalfDb, designed);
+    for (unsigned ch = 0; ch < channelCount_; ++ch) {
+        for (size_t band = 0; band < kBandCount; ++band) {
+            const BiquadCoefficients coefficients = designed[band].Coefficients();
+            if (rampSamples == 0) {
+                stages_[ch][band].Load(coefficients);
+            } else {
+                // A curve change swaps a band's coefficients under live filter
+                // state, and a swap steps the output by the size of the change:
+                // measured on the plan-free curve path, an un-ramped all-band
+                // flip steps 1.37 to 1.40 times the signal's own largest step at a
+                // band centre, and the ramp holds every measured case at or under
+                // 0.95 times it. The ramp moves the running section to the new set
+                // over 50 ms instead.
+                stages_[ch][band].LoadRamped(coefficients, rampSamples);
+            }
         }
     }
 }
@@ -221,18 +169,37 @@ bool DiracBiquadFilter::UpdateGains(const int gainsHalfDb[kBandCount]) {
     if (!configured_ || gainsHalfDb == nullptr) {
         return false;
     }
-    // Only the user EQ sections are rebuilt. The signature and both limiter
-    // stages keep their coefficients and their memories, so a live curve change
-    // neither allocates nor flushes the look-ahead ring.
-    SetUserBands(gainsHalfDb);
+    // Only the user EQ sections are rebuilt, and they are ramped to their new
+    // coefficients rather than swapped under their own state. The signature and
+    // both stages keep their coefficients and their memories, so a live curve
+    // change neither allocates nor flushes the look-ahead ring, and it does not
+    // step the output either.
+    SetUserBands(gainsHalfDb, rampSamples_);
+
+    // Only the curve moves here. The plan is not built on this path: the effect
+    // applies the curve and the matching published plan together, so a gains
+    // change never leaves the shaper bending the previous response.
+    memcpy(appliedGainsHalfDb_, gainsHalfDb, sizeof(appliedGainsHalfDb_));
     return true;
+}
+
+bool DiracBiquadFilter::AdoptBendPlan(const DiracBandPlan &plan) {
+    if (!configured_ || !plan.valid || plan.sampleRateHz != sampleRateHz_) {
+        return false;
+    }
+    for (size_t band = 0; band < kBandCount; ++band) {
+        if (plan.gainsHalfDb[band] != appliedGainsHalfDb_[band]) {
+            return false;
+        }
+    }
+    return bandShaper_.AdoptPlan(plan);
 }
 
 void DiracBiquadFilter::Reset() {
     for (unsigned ch = 0; ch < kMaxChannels; ++ch) {
         ResetBiquads(ch);
     }
-    levelLimiter_.Reset();
+    bandShaper_.Reset();
     peakLimiter_.Reset();
 }
 
@@ -293,12 +260,13 @@ void DiracBiquadFilter::Process(const void *input, void *output, size_t frameCou
                 for (unsigned ch = 0; ch < channelCount; ++ch) {
                     staged[ch] = ProcessSample(in[base + ch], ch);
                 }
+                bandShaper_.BeginFrame();
                 for (unsigned ch = 0; ch < channelCount; ++ch) {
                     float y = staged[ch];
                     if (accumulate) {
                         y += out[base + ch];
                     }
-                    y = levelLimiter_.ProcessSample(y, ch);
+                    y = bandShaper_.ProcessSample(y, ch);
                     out[base + ch] = peakLimiter_.ProcessSample(y, ch);
                 }
             }
@@ -312,12 +280,13 @@ void DiracBiquadFilter::Process(const void *input, void *output, size_t frameCou
                 for (unsigned ch = 0; ch < channelCount; ++ch) {
                     staged[ch] = ProcessSample(static_cast<float>(in[base + ch]) / 32768.0f, ch);
                 }
+                bandShaper_.BeginFrame();
                 for (unsigned ch = 0; ch < channelCount; ++ch) {
                     float y = staged[ch];
                     if (accumulate) {
                         y += static_cast<float>(out[base + ch]) / 32768.0f;
                     }
-                    y = levelLimiter_.ProcessSample(y, ch);
+                    y = bandShaper_.ProcessSample(y, ch);
                     y = peakLimiter_.ProcessSample(y, ch);
                     out[base + ch] = static_cast<int16_t>(std::lround(y * 32767.0f));
                 }

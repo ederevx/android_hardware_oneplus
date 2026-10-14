@@ -46,6 +46,9 @@
 //
 // A stage configured to bound its output adds one thing to that law: a ceiling
 // on the gain it applies, read from the largest input inside its own look-ahead.
+// The ceiling is a gain computed from that maximum, so the multiply that applies
+// it can land one float rounding above the exact ceiling; the bound is measured
+// against the built stage, not asserted from the arithmetic.
 // That maximum is kept as the larger of the current and the previous detector
 // block, so a sample can never leave the delay line without the block it came
 // from still being counted, which is what makes the stage's output stay at or
@@ -59,6 +62,14 @@
 // (inter-sample) peak stays a kernel-dependent property of the gain path with
 // no true-peak guarantee. The two-block coverage argument is unchanged.
 //
+// The phases are evaluated folded. The kernel's phases mirror each other,
+// c_{P-p}[k] = c_p[L-1-k], so a phase and its mirror are two dot products of
+// half the taps against the sample sums and differences, and their larger
+// magnitude follows from max(|u+v|, |u-v|) = |u| + |v|; the middle phase of an
+// even phase count is symmetric with itself and needs the sums alone. The
+// values are the same as the unfolded form's, up to the reassociation of the
+// sums, at half the multiply-accumulates.
+//
 // The look-ahead belongs to the stage that configures it, so a stage that has
 // none reports no latency and one that has some adds a fixed output delay; the
 // legacy effect API reports no latency at all, so the framework cannot
@@ -68,6 +79,9 @@ class DiracLimiter {
     static constexpr unsigned kMaxChannels = 8;
     static constexpr unsigned kMaxTruePeakTaps = 32;
     static constexpr unsigned kMaxTruePeakPhases = 8;
+    // The mirrored pairs of the largest kernel: phases 1..(P-1)/2, each covering
+    // itself and its mirror P-p.
+    static constexpr unsigned kMaxTruePeakPairs = (kMaxTruePeakPhases - 1) / 2;
 
     // One stage's configuration. Every field is a property of the stage, so a
     // caller names its stages by what they do rather than by position.
@@ -93,11 +107,24 @@ class DiracLimiter {
     // for the stream rate. An unsupported combination leaves the stage bypassed.
     void Configure(unsigned sampleRateHz, unsigned channelCount, const Params &params);
 
+    // Replaces the attenuation cap, never past the configured one, and keeps
+    // every detector and smoothing state, so a live cap change does not reset
+    // the law. A cap the law is already past is reached by its own release, so
+    // the change never steps the gain.
+    void SetMaxAttenuationDb(float maxAttenuationDb);
+
     void Reset();
 
     // One sample of one channel; `channel` selects the per-channel detector,
     // hold, smoothing and delay state of an interleaved stream.
     float ProcessSample(float x, unsigned channel);
+
+    // The linear gain the stage is applying on this channel after the last
+    // processed sample, so an owner can use the law's attenuation without the
+    // sample it was applied to. For a bounding stage the applied gain is the
+    // smaller of this and the ceiling it reads; a stage without a ceiling, which
+    // is what a band shaper drives, applies exactly this.
+    float Gain(unsigned channel) const;
 
   private:
     // One channel's detector, hold, smoothing and delay state.
@@ -112,8 +139,9 @@ class DiracLimiter {
         double boundAccumulator = 0.0;  // largest input in the current block
         double boundPrevious = 0.0;  // ... and in the one before it
         unsigned boundFill = 0;
-        // (kMaxTruePeakPhases - 1) coefficient sets of 2*taps are read from
-        // this mirrored ring; its size is the largest read, 2*(2*kMaxTaps).
+        // The folded coefficient sets are read from this mirrored ring, as the
+        // two half-kernels a pair or the middle phase weights; its size is the
+        // largest read span, 2*(2*kMaxTaps).
         float truePeakHistory[4 * kMaxTruePeakTaps] = {};  // mirrored ring
         unsigned truePeakWrite = 0;
         float s1 = 0.0f;  // release state, in dB of attenuation
@@ -159,6 +187,13 @@ class DiracLimiter {
     unsigned holdSamples_ = 0;
     unsigned delaySamples_ = 0;
     float truePeakCoef_[kMaxTruePeakPhases * 2 * kMaxTruePeakTaps] = {};
+    // The kernel folded for evaluation: one even and one odd set per mirrored
+    // phase pair, and the symmetric middle phase where the count is even.
+    float truePeakEven_[kMaxTruePeakPairs * kMaxTruePeakTaps] = {};
+    float truePeakOdd_[kMaxTruePeakPairs * kMaxTruePeakTaps] = {};
+    float truePeakMiddle_[kMaxTruePeakTaps] = {};
+    unsigned truePeakPairs_ = 0;
+    bool truePeakMiddlePhase_ = false;
     unsigned truePeakTaps_ = 0;
     unsigned truePeakLength_ = 0;
     unsigned truePeakPhases_ = 0;

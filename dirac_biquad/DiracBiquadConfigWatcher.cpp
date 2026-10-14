@@ -36,6 +36,12 @@ DiracBiquadConfigWatcher::DiracBiquadConfigWatcher() {
     published_.diracEnabled = lastGoodEnabled_;
     published_.fallback = lastGoodFallback_;
     published_.volumeDb = lastGoodVolumeDb_;
+    // No plan is built here: the create path must not plan, so the first
+    // publication seeds an invalid plan and the audio side stays in fallback
+    // until the helper's first build lands.
+    published_.plan = DiracBandPlan{};
+    lastPlan_ = DiracBandPlan{};
+    plannedRate_ = 0;
     lastLoadError_ = 0;
     mtimeSec_ = 0;
     mtimeNsec_ = 0;
@@ -90,7 +96,9 @@ void *DiracBiquadConfigWatcher::ThreadMain(void *self) {
 }
 
 void DiracBiquadConfigWatcher::SetSampleRate(unsigned sampleRateHz) {
-    sampleRateHz_.store(sampleRateHz == 0 ? 48000u : sampleRateHz, std::memory_order_relaxed);
+    // Release: the helper reads the rate with acquire before it builds a plan,
+    // so a rate set here is the one the next build sees.
+    sampleRateHz_.store(sampleRateHz == 0 ? 48000u : sampleRateHz, std::memory_order_release);
 }
 
 void DiracBiquadConfigWatcher::RequestReload() {
@@ -137,7 +145,12 @@ void DiracBiquadConfigWatcher::Loop() {
                 break;
             }
             waitedMs += sliceMs;
-            if (reloadRequested_.load(std::memory_order_acquire)) {
+            // Leave the wait early on a forced reload, or when the rate moved
+            // away from the one the last build covered: a rate that changed
+            // while a build ran would otherwise not be replanned until the next
+            // scheduled poll.
+            if (reloadRequested_.load(std::memory_order_acquire) ||
+                sampleRateHz_.load(std::memory_order_acquire) != plannedRate_) {
                 break;
             }
         }
@@ -146,7 +159,11 @@ void DiracBiquadConfigWatcher::Loop() {
         }
 
         lock.unlock();
-        if (reloadRequested_.exchange(false, std::memory_order_acq_rel)) {
+        const bool forced = reloadRequested_.exchange(false, std::memory_order_acq_rel);
+        // A rate change must bypass the mtime gate: the file did not move, but
+        // the plan for it is now wrong.
+        const bool rateChanged = sampleRateHz_.load(std::memory_order_acquire) != plannedRate_;
+        if (forced || rateChanged) {
             PublishOnce(/*force=*/true);
         } else {
             PublishOnce(/*force=*/false);
@@ -157,25 +174,19 @@ void DiracBiquadConfigWatcher::Loop() {
 
 void DiracBiquadConfigWatcher::PublishOnce(bool force) {
     struct stat st;
-    if (force) {
-        // Record the mtime without gating on it: a forced reload must re-parse
-        // even when the file's timestamp did not move.
-        if (stat(DiracBiquadConfig::ConfigPath(), &st) == 0) {
-            mtimeSec_ = static_cast<int64_t>(st.st_mtim.tv_sec);
-            mtimeNsec_ = st.st_mtim.tv_nsec;
-            mtimeValid_ = true;
-        }
-    } else {
-        if (stat(DiracBiquadConfig::ConfigPath(), &st) != 0) {
+    // The timestamp is only read here, never recorded: it is committed once the
+    // file has been parsed, because a writer that truncates the file and rewrites
+    // it inside one clock tick would otherwise be skipped for good - the
+    // timestamp taken from the empty file is the one the finished file carries.
+    const bool haveStat = stat(DiracBiquadConfig::ConfigPath(), &st) == 0;
+    if (!force) {
+        if (!haveStat) {
             return;
         }
         if (mtimeValid_ && static_cast<int64_t>(st.st_mtim.tv_sec) == mtimeSec_ &&
             st.st_mtim.tv_nsec == mtimeNsec_) {
             return;
         }
-        mtimeSec_ = static_cast<int64_t>(st.st_mtim.tv_sec);
-        mtimeNsec_ = st.st_mtim.tv_nsec;
-        mtimeValid_ = true;
     }
 
     int gains[DiracBiquadConfig::kBandCount];
@@ -191,6 +202,14 @@ void DiracBiquadConfigWatcher::PublishOnce(bool force) {
         lastGoodFallback_ = fallback;
         lastGoodVolumeDb_ = volumeDb;
         lastLoadError_ = 0;
+        // Only now is the file's timestamp the state's timestamp: a file that
+        // could not be parsed keeps its previous mtime on record, so the next poll
+        // reads it again instead of skipping it as unchanged.
+        if (haveStat) {
+            mtimeSec_ = static_cast<int64_t>(st.st_mtim.tv_sec);
+            mtimeNsec_ = st.st_mtim.tv_nsec;
+            mtimeValid_ = true;
+        }
     } else if (error != lastLoadError_) {
         // Keep the last good state: an unreadable or torn file must never
         // silently convert the effect to a full pass-through. Log each distinct
@@ -200,13 +219,47 @@ void DiracBiquadConfigWatcher::PublishOnce(bool force) {
               DiracBiquadConfig::ConfigPath(), strerror(error));
     }
 
+    // Build the plan for the rate and gains this snapshot will carry. This runs
+    // outside the publish guard and before it is taken -- the build costs
+    // milliseconds and the guard is held only for the struct copy. A change that
+    // left the rate and the gains alone reuses the last plan, so a flag-only
+    // change is never delayed by a build.
+    const unsigned rate = sampleRateHz_.load(std::memory_order_acquire);
+    int32_t gains32[DiracBiquadConfig::kBandCount];
+    for (size_t band = 0; band < DiracBiquadConfig::kBandCount; ++band) {
+        gains32[band] = static_cast<int32_t>(lastGoodGainsHalfDb_[band]);
+    }
+    const bool samePlanKey = lastPlan_.valid && lastPlan_.sampleRateHz == rate &&
+                             memcmp(lastPlan_.gainsHalfDb, gains32, sizeof(gains32)) == 0;
+    if (!samePlanKey) {
+        // `lastPlan_` is both the destination and the source of the key, and the
+        // key was read above, before the build overwrites it.
+        planner_.Build(rate, gains32, &lastPlan_);
+        if (lastPlan_.valid && !lastPlan_.holdsLimit) {
+            // The plan is applied anyway: it is the best the section budget can
+            // do, its output is still bounded by the peak stage, and reporting the
+            // shortfall is what keeps it from being silent.
+            ALOGW("%s: bend plan does not hold the limit: residual %u, flat %.4f, %u sections",
+                  __func__, lastPlan_.residualIntervals,
+                  static_cast<double>(lastPlan_.flatGain), lastPlan_.sectionCount);
+        }
+    }
+    // The rate the plan actually covers: a rate that moved while the build ran
+    // differs from this on the next slice and forces a replan.
+    plannedRate_ = lastPlan_.sampleRateHz;
+
     DiracBiquadConfigSnapshot snapshot;
     snapshot.generation = ++generation_;
     memcpy(snapshot.gainsHalfDb, lastGoodGainsHalfDb_, sizeof(snapshot.gainsHalfDb));
     snapshot.diracEnabled = lastGoodEnabled_;
     snapshot.fallback = lastGoodFallback_;
     snapshot.volumeDb = lastGoodVolumeDb_;
+    snapshot.plan = lastPlan_;
     Publish(snapshot);
+    // The generation a reader gates on is published only after the snapshot it
+    // belongs to, so a reader that sees a new generation always finds the new
+    // state behind it.
+    publishedGeneration_.store(snapshot.generation, std::memory_order_release);
 }
 
 void DiracBiquadConfigWatcher::Publish(const DiracBiquadConfigSnapshot &snapshot) {
