@@ -19,12 +19,62 @@
 
 #include <algorithm>
 #include <cmath>
+#include <stdint.h>
+
+#if defined(__x86_64__) || defined(__i386__)
+#include <xmmintrin.h>
+#endif
 
 #include "Biquad.h"
 #include "DiracBiquadTable.h"
 #include "DiracLimiter.h"
 
 namespace {
+
+// Flush-to-zero for one sample-processing call. The filter and limiter states
+// decay into denormals during silence, and denormal operands carry a large
+// penalty on the target cores. The FP control register is saved and restored,
+// so the mode lasts exactly the call and never leaks to another thread or past
+// an early return.
+//
+// Guarded architectures: AArch64 FPCR bit 24 (FZ), 32-bit ARM FPSCR bit 24
+// (FZ), and x86/x86-64 MXCSR FTZ (bit 15) | DAZ (bit 6). Every other
+// architecture is left untouched rather than assumed to be protected.
+class ScopedNoDenormals {
+  public:
+    ScopedNoDenormals() {
+#if defined(__aarch64__)
+        __asm__ __volatile__("mrs %0, fpcr" : "=r"(saved_));
+        __asm__ __volatile__("msr fpcr, %0" : : "r"(saved_ | (1u << 24)));
+#elif defined(__arm__)
+        __asm__ __volatile__("vmrs %0, fpscr" : "=r"(saved_));
+        __asm__ __volatile__("vmsr fpscr, %0" : : "r"(saved_ | (1u << 24)));
+#elif defined(__x86_64__) || defined(__i386__)
+        saved_ = _mm_getcsr();
+        _mm_setcsr(saved_ | 0x8040u);
+#endif
+    }
+    ~ScopedNoDenormals() {
+#if defined(__aarch64__)
+        __asm__ __volatile__("msr fpcr, %0" : : "r"(saved_));
+#elif defined(__arm__)
+        __asm__ __volatile__("vmsr fpscr, %0" : : "r"(saved_));
+#elif defined(__x86_64__) || defined(__i386__)
+        _mm_setcsr(saved_);
+#endif
+    }
+    ScopedNoDenormals(const ScopedNoDenormals &) = delete;
+    ScopedNoDenormals &operator=(const ScopedNoDenormals &) = delete;
+
+  private:
+#if defined(__aarch64__)
+    uint64_t saved_ = 0;
+#elif defined(__arm__)
+    uint32_t saved_ = 0;
+#elif defined(__x86_64__) || defined(__i386__)
+    unsigned int saved_ = 0;
+#endif
+};
 
 // The Dirac equalizer models each band with alpha = sin(w0)/2 (the app's
 // EqCurveView "halfAlpha"), which is the RBJ peaking response at Q = 1.0.
@@ -203,6 +253,10 @@ void DiracBiquadFilter::Process(const void *input, void *output, size_t frameCou
         channelCount > channelCount_) {
         return;
     }
+
+    // Keep the whole buffer's processing in flush-to-zero mode; the guard
+    // restores the previous control register on every return path.
+    ScopedNoDenormals noDenormals;
 
     // One frame is staged so each staged value is read before its output slot is
     // written; input and output may alias.
