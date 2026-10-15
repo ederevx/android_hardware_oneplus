@@ -253,6 +253,12 @@ void DiracBiquadFilter::Reset() {
     }
     bandShaper_.Reset();
     peakLimiter_.Reset();
+    // A reset is also a re-engagement: the next processed buffer must not splice
+    // the live stream against a chain whose look-ahead ring is cold and whose
+    // filters start from rest. Reset runs from Configure (rampSamples_ is set and
+    // the peak stage is configured) and from Init (both are zero, so no fade).
+    engageDelay_ = peakLimiter_.LatencySamples();
+    engageRemaining_ = rampSamples_;
 }
 
 void DiracBiquadFilter::ResetBiquads(unsigned channel) {
@@ -262,6 +268,20 @@ void DiracBiquadFilter::ResetBiquads(unsigned channel) {
     for (size_t band = 0; band < kBandCount; ++band) {
         stages_[channel][band].Reset();
     }
+}
+
+float DiracBiquadFilter::EngageWet() {
+    if (engageDelay_ > 0) {
+        --engageDelay_;
+        return 0.0f;
+    }
+    if (engageRemaining_ > 0) {
+        const float wet = 1.0f - static_cast<float>(engageRemaining_) /
+                                      static_cast<float>(rampSamples_);
+        --engageRemaining_;
+        return wet;
+    }
+    return 1.0f;
 }
 
 float DiracBiquadFilter::ProcessSample(float x, unsigned channel) {
@@ -301,8 +321,11 @@ void DiracBiquadFilter::Process(const void *input, void *output, size_t frameCou
     ScopedNoDenormals noDenormals;
 
     // One frame is staged so each staged value is read before its output slot is
-    // written; input and output may alias.
+    // written; input and output may alias. `dry` is the sample the bypass path
+    // would have written this frame, for the engage crossfade: it never goes
+    // through the chain, so it is sanitized here rather than in ProcessSample.
     float staged[kMaxChannels];
+    float dry[kMaxChannels];
 
     switch (format) {
         case AUDIO_FORMAT_PCM_FLOAT: {
@@ -310,17 +333,29 @@ void DiracBiquadFilter::Process(const void *input, void *output, size_t frameCou
             float *out = static_cast<float *>(output);
             for (size_t frame = 0; frame < frameCount; ++frame) {
                 const size_t base = frame * channelCount;
+                const float wet = EngageWet();
                 for (unsigned ch = 0; ch < channelCount; ++ch) {
-                    staged[ch] = ProcessSample(in[base + ch], ch);
+                    const float x = in[base + ch];
+                    dry[ch] = std::isfinite(x) ? x : 0.0f;
+                    staged[ch] = ProcessSample(x, ch);
                 }
                 bandShaper_.BeginFrame();
                 for (unsigned ch = 0; ch < channelCount; ++ch) {
                     float y = staged[ch];
+                    float d = dry[ch];
                     if (accumulate) {
-                        y += out[base + ch];
+                        // Read before the write so an aliased buffer is safe, and
+                        // so dry carries the same accumulated output as y.
+                        const float prior = out[base + ch];
+                        y += prior;
+                        d += prior;
+                    }
+                    if (!std::isfinite(d)) {
+                        d = 0.0f;
                     }
                     y = bandShaper_.ProcessSample(y, ch);
-                    out[base + ch] = peakLimiter_.ProcessSample(y, ch);
+                    y = peakLimiter_.ProcessSample(y, ch);
+                    out[base + ch] = wet >= 1.0f ? y : d + wet * (y - d);
                 }
             }
             break;
@@ -330,18 +365,31 @@ void DiracBiquadFilter::Process(const void *input, void *output, size_t frameCou
             int16_t *out = static_cast<int16_t *>(output);
             for (size_t frame = 0; frame < frameCount; ++frame) {
                 const size_t base = frame * channelCount;
+                const float wet = EngageWet();
                 for (unsigned ch = 0; ch < channelCount; ++ch) {
-                    staged[ch] = ProcessSample(static_cast<float>(in[base + ch]) / 32768.0f, ch);
+                    const float x = static_cast<float>(in[base + ch]) / 32768.0f;
+                    dry[ch] = x;
+                    staged[ch] = ProcessSample(x, ch);
                 }
                 bandShaper_.BeginFrame();
                 for (unsigned ch = 0; ch < channelCount; ++ch) {
                     float y = staged[ch];
+                    float d = dry[ch];
                     if (accumulate) {
-                        y += static_cast<float>(out[base + ch]) / 32768.0f;
+                        const float prior = static_cast<float>(out[base + ch]) / 32768.0f;
+                        y += prior;
+                        d += prior;
+                    }
+                    if (!std::isfinite(d)) {
+                        d = 0.0f;
                     }
                     y = bandShaper_.ProcessSample(y, ch);
                     y = peakLimiter_.ProcessSample(y, ch);
-                    out[base + ch] = static_cast<int16_t>(std::lround(y * 32767.0f));
+                    const float value = wet >= 1.0f ? y : d + wet * (y - d);
+                    // The dry leg is not bounded by the limiter, so clamp before
+                    // the integer conversion rather than let lround wrap.
+                    const float clamped = std::clamp(value, -1.0f, 1.0f);
+                    out[base + ch] = static_cast<int16_t>(std::lround(clamped * 32767.0f));
                 }
             }
             break;

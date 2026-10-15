@@ -154,6 +154,11 @@ class DiracBiquadFilter {
   private:
     float ProcessSample(float x, unsigned channel);
 
+    // The dry/wet fraction for one frame of the engage crossfade, advanced once
+    // per frame. Returns 1 once the fade is over, and 0 while the look-ahead
+    // still has to fill.
+    float EngageWet();
+
     // Clears the two biquad banks of one channel, leaving the limiters alone.
     void ResetBiquads(unsigned channel);
 
@@ -185,6 +190,14 @@ class DiracBiquadFilter {
     // The ramp a live curve change is applied over: 50 ms of stream, the same
     // fade the shaper's engagement uses.
     unsigned rampSamples_ = 0;
+    // The engage crossfade: after a Reset the chain re-enters a stream that was
+    // going out unprocessed, so the output stays dry while the peak stage's
+    // look-ahead fills and then ramps to the chain's own output over
+    // rampSamples_. Both are zero before Configure and stay zero on a stream
+    // that never re-engaged, so a fully wet frame is bit-identical to today's
+    // output.
+    unsigned engageDelay_ = 0;
+    unsigned engageRemaining_ = 0;
     Biquad signature_[kMaxChannels][kSignatureCount];
     // The gains this filter has actually applied, the other half of the key a
     // bend plan is adopted against.

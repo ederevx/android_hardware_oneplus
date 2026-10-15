@@ -126,6 +126,10 @@ class DiracLimiter {
     // is what a band shaper drives, applies exactly this.
     float Gain(unsigned channel) const;
 
+    // The output delay this stage's look-ahead imposes, so an owner can hold its
+    // own output dry for exactly as long as the ring needs to fill.
+    unsigned LatencySamples() const { return delaySamples_; }
+
   private:
     // One channel's detector, hold, smoothing and delay state.
     struct Envelope {

@@ -105,6 +105,12 @@ typedef struct dirac_biquad_object_s {
     // rebuilds the whole chain. While it holds, an apply may only rebuild the
     // user EQ, so the limiters keep their state across a live curve update.
     bool streamConfigured;
+    // False while the stream is going out unprocessed: the framework's STARTING
+    // bypass before the first ENABLE, and every frame this effect's gate closes.
+    // The first processed frame after that resets the chain and fades it in, so a
+    // re-engagement never splices the raw stream against a cold chain.
+    bool chainRunning;
+
     // Owns the only thread that touches the QEM state file. The mixer thread
     // reads a published snapshot and takes no filesystem call.
     DiracBiquadConfigWatcher configWatcher;
@@ -300,8 +306,17 @@ static int32_t DiracBiquad_Process(effect_handle_t self,
     // arrives, so a device switch mid-stream takes effect on the next buffer.
     if (!context->enabled || !context->diracEnabled || !context->fallback ||
         DiracBiquad_IsDspOutput(context->device) || !context->filterReady) {
+        context->chainRunning = false;
         DiracBiquad_PassThrough(context, inBuffer, outBuffer);
         return 0;
+    }
+
+    // Until now the stream went out unprocessed, so the chain's look-ahead ring
+    // and filter state are cold or stale from an earlier engagement. Reset drops
+    // that state and re-arms the engage crossfade; it allocates nothing.
+    if (!context->chainRunning) {
+        context->filter.Reset();
+        context->chainRunning = true;
     }
 
     context->filter.Process(
@@ -663,6 +678,7 @@ static int DiracBiquad_Init(dirac_biquad_module_t *module) {
     module->context.filterReady = false;
     module->context.appliedGeneration = 0;
     module->context.streamConfigured = false;
+    module->context.chainRunning = false;
     DiracBiquadConfig::Fallback(module->context.gainsHalfDb, &module->context.diracEnabled,
                               &module->context.fallback, &module->context.volumeDb);
     module->context.configWatcher.Start();
