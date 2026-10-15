@@ -18,8 +18,7 @@
 package org.lineageos.dirac.qem
 
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
+import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.util.Log
@@ -33,27 +32,21 @@ import android.util.Log
  * this process was not running for is never missed. [DiracState] keeps a copy
  * only to know when a change is worth telling a live page about.
  *
- * The two sinks need different sources, which is why neither the policy's
- * device list nor a broadcast is enough on its own. The audio policy's device
- * list is not a connection source for the wired sinks on this platform:
- * AudioPolicyManager attaches every output device the HAL declares to its
- * available-output set as the HW module loads, so AudioManager.isWiredHeadsetOn()
- * and getDevices(GET_DEVICES_OUTPUTS) both report the wired headset with
- * nothing in the jack; the sticky HEADSET_PLUG broadcast that AudioService's
- * AudioDeviceInventory sends on every wired connect and disconnect is the true
- * jack state. A host output is the opposite case: its device is created only
- * while it is attached -- Bluetooth A2DP and SCO, USB, the remote submix and the
- * hearing aid alike -- so its presence in that same list is the connection
- * signal, while a profile or mix state would need a second source, and its
- * broadcast is not delivered to a process that was not running. The built-in
- * speaker and earpiece are the exception that keeps presence from being a
- * liveness test: the policy attaches them as the HW module loads, so they are
- * excluded from host detection and classified by their own device instead.
+ * The source is the device the policy routes media to,
+ * AudioManager.getAudioDevicesForAttributes(USAGE_MEDIA), which is the same
+ * value AudioFlinger hands the effect as EFFECT_CMD_SET_DEVICE. The two
+ * sources this used to need are each wrong for the job. The policy's output
+ * list is not a connection signal: AudioPolicyManager attaches every output
+ * device the HAL declares as the HW module loads, so it lists the wired
+ * headset with nothing in the jack. The sticky HEADSET_PLUG broadcast is not
+ * an output identity either: AudioDeviceInventory sends it for a USB headset
+ * too (DEVICE_OUT_USB_HEADSET), so a broadcast cannot tell a USB-C headset
+ * from the 3.5 mm jack and the app would push the wired ADSP frames at a USB
+ * output. The routed device is the one input the app and the effect both act
+ * on.
  */
 object DiracRouteResolver {
     private const val TAG = "DiracQemRoute"
-    private const val EXTRA_STATE = "state"
-    private const val EXTRA_MICROPHONE = "microphone"
 
     /**
      * The platform audio devices the app names, as the HAL itself names them
@@ -71,37 +64,42 @@ object DiracRouteResolver {
     private const val AUDIO_DEVICE_OUT_USB_DEVICE = 0x4000
     private const val AUDIO_DEVICE_OUT_REMOTE_SUBMIX = 0x8000
     private const val AUDIO_DEVICE_OUT_LINE = 0x20000
+    private const val AUDIO_DEVICE_OUT_SPEAKER_SAFE = 0x400000
     private const val AUDIO_DEVICE_OUT_USB_HEADSET = 0x4000000
     private const val AUDIO_DEVICE_OUT_HEARING_AID = 0x8000000
 
     /**
-     * The one owner of "does the Dirac DSP voice this output": the four devices
-     * the effect's own gate excludes from the host chain, DiracBiquad_IsDspOutput
-     * in ../dirac_biquad/EffectDiracBiquad.cpp:231-234. Everything outside the
-     * mask -- Bluetooth A2DP and SCO, USB, the remote submix, hearing aid,
-     * earpiece, line and speaker variants alike -- is voiced by the host
-     * fallback, so no ADSP frame may be pushed to it. The app and the effect are
-     * separate modules with no shared header, so the mask is restated here; this
-     * is the only copy on the app side and nothing else may name the four.
+     * The one owner of "does the Dirac DSP voice this output", the exact set the
+     * effect's own gate cedes to the DSP: DiracBiquad_IsDspOutput in
+     * ../dirac_biquad/EffectDiracBiquad.cpp. It is a set and not a bit mask,
+     * because an audio device type is an exclusive value and a Bluetooth LE type
+     * carries a built-in type's bit; the effect tests whole-value membership for
+     * the same reason, and the app has to agree with it. This is the only copy
+     * on the app side.
      */
-    private const val DSP_VOICED_DEVICES =
-        AUDIO_DEVICE_OUT_SPEAKER or AUDIO_DEVICE_OUT_WIRED_HEADSET or
-            AUDIO_DEVICE_OUT_WIRED_HEADPHONE or AUDIO_DEVICE_OUT_LINE
+    private val DSP_VOICED_DEVICES = setOf(
+        AUDIO_DEVICE_OUT_SPEAKER,
+        AUDIO_DEVICE_OUT_SPEAKER_SAFE,
+        AUDIO_DEVICE_OUT_WIRED_HEADSET,
+        AUDIO_DEVICE_OUT_WIRED_HEADPHONE,
+        AUDIO_DEVICE_OUT_LINE,
+    )
 
-    private val WIRED_SINK_TYPES = intArrayOf(
-        AudioDeviceInfo.TYPE_WIRED_HEADSET,
-        AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+    /** The wired jack's own devices, the ones the headset model drives. */
+    private val WIRED_DEVICES = setOf(
+        AUDIO_DEVICE_OUT_WIRED_HEADSET,
+        AUDIO_DEVICE_OUT_WIRED_HEADPHONE,
+        AUDIO_DEVICE_OUT_LINE,
     )
 
     /**
-     * The host outputs the app detects, as the AudioDeviceInfo type the platform
-     * reports and the platform audio device it is. The order is the tie-break
-     * when several are attached; Bluetooth A2DP keeps the head of the list it
-     * already had. Unlike the wired devices, these are created when attached and
-     * torn down when removed, so their presence in the policy's output list is
-     * the connection signal. The built-in earpiece and speaker are deliberately
-     * absent: presence is not liveness for them (see the class comment), and
-     * [DSP_VOICED_DEVICES] classifies them on their own device instead.
+     * The host outputs, as the AudioDeviceInfo type the platform reports and the
+     * platform audio device it is. Only the A2DP entry is read on its own, by
+     * the loudness scalar's question; the rest are here so [OUTPUT_DEVICES] can
+     * name every routed device. The built-in speaker is named directly in
+     * [OUTPUT_DEVICES] instead, because for it the routed device is the routing
+     * answer and not a presence question; the earpiece is deliberately unnamed,
+     * so it falls to the host exactly as the effect routes it.
      */
     private val A2DP_SINK =
         AudioDeviceInfo.TYPE_BLUETOOTH_A2DP to AUDIO_DEVICE_OUT_BLUETOOTH_A2DP
@@ -115,6 +113,25 @@ object DiracRouteResolver {
         AudioDeviceInfo.TYPE_HEARING_AID to AUDIO_DEVICE_OUT_HEARING_AID,
         AudioDeviceInfo.TYPE_REMOTE_SUBMIX to AUDIO_DEVICE_OUT_REMOTE_SUBMIX,
     )
+
+    /**
+     * The AudioDeviceInfo type the policy routes to, mapped to the platform
+     * audio device the HAL and the effect name. It is built after
+     * [HOST_SINK_DEVICES] because it extends it, and it is the only place the
+     * app turns a routed type into a device.
+     */
+    private val OUTPUT_DEVICES: Map<Int, Int> = mapOf(
+        AudioDeviceInfo.TYPE_BUILTIN_SPEAKER to AUDIO_DEVICE_OUT_SPEAKER,
+        AudioDeviceInfo.TYPE_BUILTIN_SPEAKER_SAFE to AUDIO_DEVICE_OUT_SPEAKER_SAFE,
+        AudioDeviceInfo.TYPE_WIRED_HEADSET to AUDIO_DEVICE_OUT_WIRED_HEADSET,
+        AudioDeviceInfo.TYPE_WIRED_HEADPHONES to AUDIO_DEVICE_OUT_WIRED_HEADPHONE,
+        AudioDeviceInfo.TYPE_LINE_ANALOG to AUDIO_DEVICE_OUT_LINE,
+    ) + HOST_SINK_DEVICES
+
+    /** The attributes the route question is asked for: media, the stream this app voices. */
+    private val MEDIA = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_MEDIA)
+        .build()
 
     /**
      * The live output. The route carries what it means, so the app's questions
@@ -151,74 +168,46 @@ object DiracRouteResolver {
     /**
      * Whether the Dirac DSP voices the live sink, so the ADSP frames can land on
      * it. It is the effect's own gate, [DSP_VOICED_DEVICES], applied to the
-     * device [route] resolved: the app skips the ADSP leg on exactly the outputs
-     * the effect leaves to the host.
+     * devices [route] resolved: the app skips the ADSP leg on exactly the
+     * outputs the effect leaves to the host.
      */
     fun isDspVoiced(context: Context): Boolean = route(context).dspVoiced
 
-    /** The live sink and the platform audio device it is, resolved once. */
-    private class Route(val sink: Sink, val audioDevice: Int) {
-        val dspVoiced: Boolean get() = audioDevice and DSP_VOICED_DEVICES != 0
-    }
+    /** The live sink, the platform audio device it is, and whether the DSP voices it. */
+    private class Route(val sink: Sink, val audioDevice: Int, val dspVoiced: Boolean)
 
     private fun route(context: Context): Route {
-        val sticky = stickyJack(context)
-        val plugged = sticky?.getIntExtra(EXTRA_STATE, 0)?.let { it != 0 } ?: false
-        val host = if (plugged) null else hostRoute(context)
-        val route = when {
-            plugged -> Route(Sink.WIRED, wiredAudioDevice(sticky))
-            host != null -> host
-            else -> Route(Sink.SPEAKER, AUDIO_DEVICE_OUT_SPEAKER)
+        // The device the policy routes media to: the same one AudioFlinger hands
+        // the effect, so the app and the effect gate on one input.
+        val routed = try {
+            context.getSystemService(AudioManager::class.java)
+                ?.getAudioDevicesForAttributes(MEDIA)?.map { OUTPUT_DEVICES[it.type] ?: 0 }
+                .orEmpty()
+        } catch (e: Exception) {
+            emptyList()
+        }
+        // DiracBiquad_IsDspOutput's rule: exactly one output outside the set is
+        // the host's to voice; a member, a combination, or nothing routed is
+        // left to the DSP.
+        val route = if (routed.size == 1 && routed[0] !in DSP_VOICED_DEVICES) {
+            Route(Sink.HOST, routed[0], false)
+        } else {
+            val wired = routed.firstOrNull { it in WIRED_DEVICES } ?: 0
+            val device = if (wired != 0) {
+                wired
+            } else {
+                routed.firstOrNull { it in DSP_VOICED_DEVICES } ?: AUDIO_DEVICE_OUT_SPEAKER
+            }
+            Route(if (wired != 0) Sink.WIRED else Sink.SPEAKER, device, true)
         }
         // Information, not debug: this is the decision the settings row and the
         // HAL push both follow, and it is cheap only on a route event.
         Log.i(
             TAG,
             "sink=${route.sink} device=${route.audioDevice} dsp=${route.dspVoiced} " +
-                "jack_plugged=$plugged host_output=${host?.audioDevice ?: 0} " +
-                "wired_available=[${wiredCandidates(context)}]",
+                "routed=[${routed.joinToString(",")}]",
         )
         return route
-    }
-
-    /**
-     * The live host output, or null when nothing but the built-in speaker is
-     * attached. The wired jack is not consulted here: [route] resolves it first
-     * from its own connection signal, so a policy-listed wired device can never
-     * be mistaken for the live output.
-     */
-    private fun hostRoute(context: Context): Route? {
-        val attached = outputDevices(context).map { it.type }.toSet()
-        for ((type, audioDevice) in HOST_SINK_DEVICES) {
-            if (type in attached) {
-                return Route(Sink.HOST, audioDevice)
-            }
-        }
-        return null
-    }
-
-    /**
-     * Which wired audio device the jack is. Both resolve to the same platform
-     * sound device, and that resolution belongs to the HAL: a headset with a
-     * microphone is AUDIO_DEVICE_OUT_WIRED_HEADSET, a plain headphone is
-     * AUDIO_DEVICE_OUT_WIRED_HEADPHONE.
-     */
-    private fun wiredAudioDevice(sticky: Intent?): Int =
-        if (sticky?.getBooleanExtra(EXTRA_MICROPHONE, false) == true) {
-            AUDIO_DEVICE_OUT_WIRED_HEADSET
-        } else {
-            AUDIO_DEVICE_OUT_WIRED_HEADPHONE
-        }
-
-    /**
-     * The jack's own connection signal, read once per resolution. A platform
-     * that refuses the sticky read, or has not sent one since boot, leaves the
-     * sink unwired, which is the safe answer for a jack with no known state.
-     */
-    private fun stickyJack(context: Context): Intent? = try {
-        context.registerReceiver(null, IntentFilter(Intent.ACTION_HEADSET_PLUG))
-    } catch (e: Exception) {
-        null
     }
 
     /**
@@ -232,14 +221,4 @@ object DiracRouteResolver {
     private fun outputDevices(context: Context): List<AudioDeviceInfo> =
         context.getSystemService(AudioManager::class.java)
             ?.getDevices(AudioManager.GET_DEVICES_OUTPUTS)?.toList() ?: emptyList()
-
-    /**
-     * The wired sink devices the policy reports as available. They are logged
-     * only so the device check can see that the list is not the connection
-     * signal; it carries the wired headset with nothing plugged.
-     */
-    private fun wiredCandidates(context: Context): String =
-        outputDevices(context).filter { it.type in WIRED_SINK_TYPES }
-            .joinToString(",") { "type=${it.type}" }
-            .ifEmpty { "none" }
 }
