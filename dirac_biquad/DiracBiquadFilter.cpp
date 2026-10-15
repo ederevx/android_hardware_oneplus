@@ -113,12 +113,19 @@ bool DiracBiquadFilter::Configure(unsigned sampleRateHz, unsigned channelCount,
     // over this many samples: 50 ms, the same fade the shaper uses.
     rampSamples_ = sampleRateHz / 20;
 
+    // A reconfigure replaces the curve, so nothing may stay latched across it:
+    // the decision is taken from scratch below, from the incoming gains.
+    for (size_t band = 0; band < kBandCount; ++band) {
+        identityPath_[band] = false;
+    }
+
     for (unsigned ch = 0; ch < channelCount; ++ch) {
         DiracCurveDesign::Signature(sampleRateHz, signature_[ch]);
     }
     // A fresh chain loads immediately: its memories are cleared right after, so
     // there is no running state for a step to disturb.
     SetUserBands(gainsHalfDb, 0);
+    LatchIdentityBands(gainsHalfDb);
 
     // The chain build does not depend on the plan: the law, the peak stage and
     // the coefficients above are what the shaper runs, and the plan is built and
@@ -148,6 +155,19 @@ void DiracBiquadFilter::SetUserBands(const int gainsHalfDb[kBandCount], unsigned
     DiracCurveDesign::UserBands(sampleRateHz_, gainsHalfDb, designed);
     for (unsigned ch = 0; ch < channelCount_; ++ch) {
         for (size_t band = 0; band < kBandCount; ++band) {
+            // A latched band already carries the identity set, so a 0 dB load
+            // would be a no-op on the coefficients, while LoadRamped would start a
+            // ramp that the fast path never steps, which is the only reason for the
+            // skip. It is therefore structural and order-independent: it applies
+            // only when a ramp is actually requested (rampSamples != 0, i.e. a live
+            // UpdateGains, never Configure) and only to a 0 dB target, because any
+            // other target must take the load or the band would keep passing x
+            // through. A 0 -> 0 load must also not be skipped on a RECONFIGURE: at
+            // a new rate those "identity" coefficients are the old rate's, and a
+            // later promotion would ramp from them.
+            if (rampSamples != 0 && identityPath_[band] && gainsHalfDb[band] == 0) {
+                continue;
+            }
             const BiquadCoefficients coefficients = designed[band].Coefficients();
             if (rampSamples == 0) {
                 stages_[ch][band].Load(coefficients);
@@ -165,6 +185,29 @@ void DiracBiquadFilter::SetUserBands(const int gainsHalfDb[kBandCount], unsigned
     }
 }
 
+void DiracBiquadFilter::LatchIdentityBands(const int gainsHalfDb[kBandCount]) {
+    for (size_t band = 0; band < kBandCount; ++band) {
+        // The predicate is the integer control, never an epsilon on
+        // coefficients. It reads the INCOMING gains: appliedGainsHalfDb_ is only
+        // written at the end of Configure, so a reconfigure would otherwise latch
+        // on the previous curve's gains.
+        bool fast = gainsHalfDb[band] == 0;
+        if (fast) {
+            // Defence in depth, and the reason the fast path cannot change the
+            // response: take it only when every configured channel's section
+            // really carries the identity set and is not ramping. The check can
+            // only keep a band on the full recursion.
+            for (unsigned channel = 0; channel < channelCount_; ++channel) {
+                if (stages_[channel][band].Ramping() || !stages_[channel][band].IsIdentity()) {
+                    fast = false;
+                    break;
+                }
+            }
+        }
+        identityPath_[band] = fast;
+    }
+}
+
 bool DiracBiquadFilter::UpdateGains(const int gainsHalfDb[kBandCount]) {
     if (!configured_ || gainsHalfDb == nullptr) {
         return false;
@@ -174,6 +217,15 @@ bool DiracBiquadFilter::UpdateGains(const int gainsHalfDb[kBandCount]) {
     // both stages keep their coefficients and their memories, so a live curve
     // change neither allocates nor flushes the look-ahead ring, and it does not
     // step the output either.
+    // A band whose new gain is not 0 dB leaves the identity fast path for good,
+    // before the load below (which skips a band still on it). Nothing enters the
+    // path here: engagement is a Configure-time decision only, because that is
+    // the only point at which the state is certainly consistent.
+    for (size_t band = 0; band < kBandCount; ++band) {
+        if (gainsHalfDb[band] != 0) {
+            identityPath_[band] = false;
+        }
+    }
     SetUserBands(gainsHalfDb, rampSamples_);
 
     // Only the curve moves here. The plan is not built on this path: the effect
@@ -223,7 +275,8 @@ float DiracBiquadFilter::ProcessSample(float x, unsigned channel) {
         x = signature_[channel][section].ProcessSample(x);
     }
     for (size_t band = 0; band < kBandCount; ++band) {
-        x = stages_[channel][band].ProcessSample(x);
+        x = identityPath_[band] ? stages_[channel][band].ProcessIdentity(x)
+                                : stages_[channel][band].ProcessSample(x);
     }
     // The input guard should keep this unreachable, but a coefficient set can
     // still produce a non-finite value. Recover the offending channel instead

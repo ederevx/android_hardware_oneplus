@@ -117,6 +117,22 @@ class Biquad {
     // heading for, which is what a control being dragged needs. No allocation.
     void LoadRamped(const BiquadCoefficients &coefficients, unsigned rampSamples);
 
+    // Whether a coefficient ramp is in flight, and whether the set in force is
+    // the pass-through a 0 dB RBJ peaking section realises (b0 == 1, b1 == a1,
+    // b2 == a2 bitwise). For that set the recursion reduces to
+    // y = x + a1*(x1 - y1) + a2*(x2 - y2), so on state that already satisfies
+    // x1 == y1 and x2 == y2 the section is a pure shift, which is what
+    // ProcessIdentity exploits. The filter reads both when it chooses the fast
+    // path; neither is a predicate on coefficients anywhere else.
+    bool Ramping() const { return rampRemaining_ != 0; }
+    bool IsIdentity() const { return b0_ == 1.0 && b1_ == a1_ && b2_ == a2_; }
+
+    // The identity section as a fast path: no multiply, no ramp step. It carries
+    // the x half of the state by register moves and mirrors the y half from x,
+    // which is what keeps y == x exact; it is valid only while that invariant
+    // holds, i.e. only where the band entered it on a consistent state.
+    float ProcessIdentity(float x);
+
   private:
     void SetCoefficients(BiquadType type, double w0, double q, double gainDb);
     void StepRamp();

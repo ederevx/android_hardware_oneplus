@@ -250,6 +250,19 @@ void Biquad::StepRamp() {
     }
 }
 
+float Biquad::ProcessIdentity(float x) {
+    // For b0 == 1, b1 == a1, b2 == a2 the recursion is
+    // y = x + a1*(x1 - y1) + a2*(x2 - y2), so with x1 == y1 and x2 == y2 it
+    // returns x exactly in exact arithmetic. Carrying both halves of the state
+    // the same way keeps that invariant true for the next call too, so the
+    // section can return to the full recursion with the state it would have had.
+    x2_ = x1_;
+    x1_ = x;
+    y2_ = y1_;
+    y1_ = x;
+    return x;
+}
+
 float Biquad::ProcessSample(float x) {
     StepRamp();
     const double y = b0_ * x + b1_ * x1_ + b2_ * x2_ - a1_ * y1_ - a2_ * y2_;

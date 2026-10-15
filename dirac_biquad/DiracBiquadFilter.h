@@ -162,6 +162,24 @@ class DiracBiquadFilter {
     // immediately when that is zero.
     void SetUserBands(const int gainsHalfDb[kBandCount], unsigned rampSamples);
 
+    // Chooses which bands take the identity fast path. Called only from
+    // Configure, immediately after SetUserBands has loaded every section from the
+    // incoming gains (that load is a fresh one, rampSamples 0, so no ramp is left
+    // in flight) and BEFORE the Reset at the end of Configure - the predicate
+    // reads only coefficients and ramp counters, and every memory is cleared a few
+    // lines later, before any sample runs. A band the incoming gains hold at 0 dB
+    // therefore carries the identity set with x = y = 0 exactly. Everywhere else a
+    // band may only LEAVE the path: a promotion to a full section is permanent,
+    // and a band that is ramped down live keeps the full recursion, because it
+    // still carries the residue of the coefficients it was running with in y,
+    // which only the recursion decays.
+    void LatchIdentityBands(const int gainsHalfDb[kBandCount]);
+
+    // Every band is always in the cascade; this says which of them are the
+    // identity set and take the fast path. A band is never removed, so no live
+    // curve change can shrink anything.
+    bool identityPath_[kBandCount] = {};
+
     Biquad stages_[kMaxChannels][kBandCount];
     unsigned sampleRateHz_ = 0;
     // The ramp a live curve change is applied over: 50 ms of stream, the same
