@@ -147,9 +147,52 @@ void DiracLimiter::Configure(unsigned sampleRateHz, unsigned channelCount, const
         }
     }
 
+    // Fold the table for evaluation: the phases mirror each other, because a
+    // phase and its mirror weight the same sample pairs with the same
+    // coefficients in the opposite order. A pair's larger magnitude is then the
+    // sum of its two half-kernel dot products over two, and the middle phase of
+    // an even count is symmetric with itself and needs only one. Deriving the
+    // folded sets from one side of each pair makes the mirror exact instead of
+    // leaving it to two independently rounded tables.
+    truePeakPairs_ = 0;
+    truePeakMiddlePhase_ = false;
+    std::fill(truePeakEven_, truePeakEven_ + kMaxTruePeakPairs * kMaxTruePeakTaps, 0.0f);
+    std::fill(truePeakOdd_, truePeakOdd_ + kMaxTruePeakPairs * kMaxTruePeakTaps, 0.0f);
+    std::fill(truePeakMiddle_, truePeakMiddle_ + kMaxTruePeakTaps, 0.0f);
+    if (truePeakLength_ > 0) {
+        const unsigned half = truePeakLength_ / 2;
+        const unsigned pairs = (truePeakPhases_ - 1) / 2;
+        for (unsigned pair = 0; pair < pairs; ++pair) {
+            const float *phaseCoef = truePeakCoef_ + pair * truePeakLength_;
+            float *even = truePeakEven_ + pair * half;
+            float *odd = truePeakOdd_ + pair * half;
+            for (unsigned k = 0; k < half; ++k) {
+                even[k] = phaseCoef[k] + phaseCoef[truePeakLength_ - 1 - k];
+                odd[k] = phaseCoef[k] - phaseCoef[truePeakLength_ - 1 - k];
+            }
+        }
+        if (truePeakPhases_ % 2 == 0) {
+            truePeakMiddlePhase_ = true;
+            const float *phaseCoef = truePeakCoef_ + (truePeakPhases_ / 2 - 1) * truePeakLength_;
+            for (unsigned k = 0; k < half; ++k) {
+                truePeakMiddle_[k] = phaseCoef[k];
+            }
+        }
+        truePeakPairs_ = pairs;
+    }
+
     channelCount_ = channelCount;
     Reset();
     configured_ = true;
+}
+
+void DiracLimiter::SetMaxAttenuationDb(float maxAttenuationDb) {
+    params_.maxAttenuationDb = maxAttenuationDb;
+    if (boundLinear_) {
+        // The ceiling's linear-domain floor is the same cap, so it moves with
+        // it. The dB form reads the cap from params_ on every evaluation.
+        boundFloorGain_ = static_cast<float>(std::exp(-maxAttenuationDb * kLn10Over20));
+    }
 }
 
 void DiracLimiter::Reset() {
@@ -193,6 +236,13 @@ float DiracLimiter::BoundGain(double level) const {
         return std::exp(-TargetDb(levelDb) * kLn10Over20);
     }
     return static_cast<float>(std::max(ratio, static_cast<double>(boundFloorGain_)));
+}
+
+float DiracLimiter::Gain(unsigned channel) const {
+    if (!configured_ || channel >= channelCount_) {
+        return 1.0f;
+    }
+    return channels_[channel].gain;
 }
 
 float DiracLimiter::ProcessSample(float x, unsigned channel) {
@@ -250,14 +300,38 @@ float DiracLimiter::ProcessSample(float x, unsigned channel) {
             }
             env.truePeakWrite = write;
             const float *history = env.truePeakHistory;
-            for (unsigned phase = 1; phase < truePeakPhases_; ++phase) {
-                const float *coefficient = truePeakCoef_ + (phase - 1) * length;
-                double interpolated = 0.0;
-                for (unsigned k = 0; k < length; ++k) {
-                    interpolated += static_cast<double>(coefficient[k]) *
-                                    static_cast<double>(history[write + k]);
+            const unsigned half = length / 2;
+            // One phase and its mirror share the sums and differences of the
+            // samples they weight, so a pair is two half-kernel dot products and
+            // the pair's larger magnitude is half their magnitudes' sum; the
+            // middle phase of an even count is symmetric and needs the sums
+            // alone.
+            double sums[kMaxTruePeakTaps];
+            double differences[kMaxTruePeakTaps];
+            for (unsigned k = 0; k < half; ++k) {
+                const double low = history[write + k];
+                const double high = history[write + length - 1 - k];
+                sums[k] = low + high;
+                differences[k] = low - high;
+            }
+            for (unsigned pair = 0; pair < truePeakPairs_; ++pair) {
+                const float *even = truePeakEven_ + pair * half;
+                const float *odd = truePeakOdd_ + pair * half;
+                double evenPart = 0.0;
+                double oddPart = 0.0;
+                for (unsigned k = 0; k < half; ++k) {
+                    evenPart += static_cast<double>(even[k]) * sums[k];
+                    oddPart += static_cast<double>(odd[k]) * differences[k];
                 }
-                localPeak = std::max(localPeak, std::fabs(interpolated));
+                localPeak =
+                        std::max(localPeak, 0.5 * (std::fabs(evenPart) + std::fabs(oddPart)));
+            }
+            if (truePeakMiddlePhase_) {
+                double middlePart = 0.0;
+                for (unsigned k = 0; k < half; ++k) {
+                    middlePart += static_cast<double>(truePeakMiddle_[k]) * sums[k];
+                }
+                localPeak = std::max(localPeak, std::fabs(middlePart));
             }
         }
         env.boundAccumulator = std::max(env.boundAccumulator, localPeak);

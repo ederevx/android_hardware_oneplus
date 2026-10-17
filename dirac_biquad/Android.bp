@@ -33,11 +33,16 @@ cc_library_shared {
 
     srcs: [
         "Biquad.cpp",
+        "DiracBandPlanner.cpp",
+        "DiracBandShaper.cpp",
         "DiracBiquadConfig.cpp",
         "DiracBiquadConfigWatcher.cpp",
+        "DiracBiquadEffect.cpp",
         "DiracBiquadTable.cpp",
         "DiracBiquadFilter.cpp",
+        "DiracCurveDesign.cpp",
         "DiracLimiter.cpp",
+        "DiracRoute.cpp",
         "EffectDiracBiquad.cpp",
     ],
 
@@ -55,5 +60,12 @@ cc_library_shared {
         "-Wall",
         "-Werror",
         "-fvisibility=hidden",
+        // A bend plan is a function of the stream rate and the seven gains, and
+        // the coefficients it carries were certified against a grid evaluated on
+        // the host: contraction into a fused multiply-add would let the device's
+        // arithmetic differ from the certified one in the last bits. The module
+        // therefore builds its arithmetic strictly, so what was certified is what
+        // runs.
+        "-ffp-contract=off",
     ],
 }

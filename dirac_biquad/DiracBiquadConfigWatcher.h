@@ -24,7 +24,11 @@
 #include <condition_variable>
 #include <mutex>
 
+#include "Biquad.h"
+#include "DiracBandPlan.h"
+#include "DiracBandPlanner.h"
 #include "DiracBiquadConfig.h"
+#include "DiracGuardedValue.h"
 
 // A complete, consistent copy of the QEM state file's observable state. This
 // is what the audio thread reads; the file itself is only ever touched by the
@@ -35,6 +39,17 @@ struct DiracBiquadConfigSnapshot {
     bool diracEnabled = false;
     bool fallback = false;
     double volumeDb = DiracBiquadConfig::kUnknownVolumeDb;
+    // The bend plan for exactly `gainsHalfDb` at the rate the watcher was last
+    // told. It is built before the snapshot is published, so a snapshot always
+    // carries a plan for its own gains; the audio side adopts it only when its
+    // key matches the state it has applied.
+    DiracBandPlan plan;
+    // The seven user-EQ sections for `gainsHalfDb` at `bandsRateHz`, designed by
+    // the helper so a live gain change on the audio path only loads them. A
+    // snapshot whose bands were designed at another rate must not be applied to
+    // this stream.
+    uint32_t bandsRateHz = 0;
+    BiquadCoefficients userBands[DiracBiquadConfig::kBandCount] = {};
 };
 
 // Owns the module's only filesystem access.
@@ -57,6 +72,12 @@ struct DiracBiquadConfigSnapshot {
 // loses the race skips that read and keeps the state it already applied, which
 // is at worst one poll interval stale -- the same guarantee the in-process
 // throttle gave.
+//
+// This class also owns the bend planner and the last plan. It turns the conf
+// state and the stream rate into a complete published snapshot, with the plan
+// built on this helper thread before the snapshot is published and outside the
+// publish guard, so the audio path never plans. The helper touches only these
+// members and file-local data, never the effect, the filter or the shaper.
 class DiracBiquadConfigWatcher {
   public:
     // The old in-process throttle accumulated frames and checked the file when
@@ -101,12 +122,25 @@ class DiracBiquadConfigWatcher {
     // already applied. Never blocks.
     bool Read(DiracBiquadConfigSnapshot *out);
 
+    // The generation of the latest published snapshot. A reader compares this
+    // against the generation it has applied and skips the copy entirely when
+    // nothing has moved: the snapshot carries the plan, and the audio path reads
+    // one on every process() call. The value is stored after the snapshot it
+    // belongs to, so a reader that sees a new generation always finds the new
+    // state behind it.
+    uint64_t SnapshotGeneration() const {
+        return publishedGeneration_.load(std::memory_order_acquire);
+    }
+
   private:
     // pthread_create entry point; `self` is the watcher.
     static void *ThreadMain(void *self);
     void Loop();
     void PublishOnce(bool force);
     void Publish(const DiracBiquadConfigSnapshot &snapshot);
+    // Writer thread only.
+    DiracBiquadConfigSnapshot MakeSnapshot(unsigned sampleRateHz, const Biquad *designed,
+                                           const DiracBandPlan &plan);
 
     pthread_t thread_{};
     // True from a successful spawn until Stop() has joined the helper.
@@ -115,15 +149,23 @@ class DiracBiquadConfigWatcher {
     std::condition_variable stopCondition_;
     bool stop_ = false;
     // Set once if the helper could not be spawned (EAGAIN and friends); the
-    // watcher then keeps serving the seeded baked snapshot and never retries.
+    // watcher then keeps serving the last-good or seeded state and never
+    // retries.
     bool threadStartFailed_ = false;
 
     std::atomic<bool> reloadRequested_{false};
     std::atomic<unsigned> sampleRateHz_{48000};
 
-    // Guards `published_` for the lock-free readers. Held only for the copy.
-    std::atomic_flag publishGuard_ = ATOMIC_FLAG_INIT;
-    DiracBiquadConfigSnapshot published_;
+    // One writer (the helper), try-readers on the audio path.
+    DiracGuardedValue<DiracBiquadConfigSnapshot> published_;
+
+    // The plan builder and the plan last built for it. `lastPlan_` has exactly
+    // one owner, this helper thread, and is rebuilt whenever the rate or the gains
+    // it covers move; `plannedRate_` is the rate the last build actually covered,
+    // so a rate that moved while a build ran is seen and replanned.
+    DiracBandPlanner planner_;
+    DiracBandPlan lastPlan_;
+    unsigned plannedRate_ = 0;
 
     // Writer-only state, touched by the helper thread alone.
     int lastGoodGainsHalfDb_[DiracBiquadConfig::kBandCount];
@@ -134,5 +176,9 @@ class DiracBiquadConfigWatcher {
     int64_t mtimeSec_;
     long mtimeNsec_;
     bool mtimeValid_;
+    // The writer's own counter, and the copy of it readers gate on. The counter
+    // moves before the snapshot is published, the published copy after, so the
+    // gate can never lead the state.
     uint64_t generation_;
+    std::atomic<uint64_t> publishedGeneration_{0};
 };

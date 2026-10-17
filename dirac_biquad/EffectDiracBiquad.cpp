@@ -37,6 +37,14 @@
 // the module's own dynamics, so a host output cannot sound identical to the
 // wired route.
 //
+// The modelled level stage reaches the signal through the bend plan, and a plan
+// that cannot hold the chain's magnitude limit within its section budget is
+// applied anyway, as the best that budget can do: the peak stage still bounds the
+// sample peak, the watcher logs the shortfall and the dump reports it. Where the
+// designed response violates nothing the plan names no section and the level law
+// applies no attenuation at all, which is a deliberate departure from the
+// broadband level stage this chain ran before the plan existed.
+//
 // Effect order: AudioFlinger applies the stream volume per track in
 // prepareTracks_l (mMasterVolume * track port volume) and runs the output
 // effect chain's process_l() afterwards, so this effect's input is already
@@ -44,107 +52,58 @@
 // The framework never sends EFFECT_CMD_SET_VOLUME for this descriptor;
 // the QEM state file's `volume_db` is still parsed for contract compatibility
 // but no longer drives any processing.
+//
+// This file is the C ABI alone: the effect's semantics live in
+// DiracBiquadEffect, and the checks here only validate command sizes and
+// pointers, write replies, and forward.
 
 #define LOG_TAG "dirac_biquad"
 
 #include <errno.h>
-#include <stdio.h>
+#include <new>
+#include <stdint.h>
 #include <string.h>
+
+#include <type_traits>
 
 #include <log/log.h>
 
 #include <hardware/audio_effect.h>
 
-#include "DiracBiquadConfig.h"
-#include "DiracBiquadConfigWatcher.h"
-#include "DiracBiquadFilter.h"
+#include "DiracBiquadEffect.h"
 
 // Effect UUID: 8f2b7c1e-4a5d-4e9b-9c3a-6d1f0b2e7a41
 static const effect_uuid_t kDiracBiquadUuid = {
         0x8f2b7c1e, 0x4a5d, 0x4e9b, 0x9c3a, {0x6d, 0x1f, 0x0b, 0x2e, 0x7a, 0x41}};
 
-enum {
-    DIRAC_BIQUAD_STATE_UNINITIALIZED = 0,
-    DIRAC_BIQUAD_STATE_INITIALIZED,
-    DIRAC_BIQUAD_STATE_ACTIVE,
+struct dirac_biquad_module_t {
+    // First word on purpose: the effects HAL dereferences *handle for the
+    // interface table.
+    const struct effect_interface_s *itfe;
+    DiracBiquadEffect effect;
 };
 
-typedef struct dirac_biquad_object_s {
-    uint32_t state;
-    bool configured;
-    bool enabled;
+// A vptr would sit in front of `itfe` and break every handle.
+static_assert(!std::is_polymorphic<DiracBiquadEffect>::value,
+              "the handle's first word is itfe");
 
-    // Updated by EFFECT_CMD_SET_DEVICE and read on every process() call.
-    audio_devices_t device;
+static int32_t DiracBiquad_Process(effect_handle_t self, audio_buffer_t *inBuffer,
+                                   audio_buffer_t *outBuffer);
+static int32_t DiracBiquad_Command(effect_handle_t self, uint32_t cmdCode, uint32_t cmdSize,
+                                   void *pCmdData, uint32_t *replySize, void *pReplyData);
+static int32_t DiracBiquad_GetDescriptor(effect_handle_t self, effect_descriptor_t *pDescriptor);
 
-    // Dirac-QEM parity state, reloaded on configure and on every device
-    // change from DiracBiquadConfig.
-    int gainsHalfDb[DiracBiquadFilter::kBandCount];
-    bool diracEnabled;
-    // The software-fallback switch: the effect is a fallback for routes the
-    // HAL/DSP Dirac topology cannot reach, so it stays bypassed unless the
-    // user extends Dirac to them. Data source: DiracBiquadConfig, written only
-    // by the HAL; the effect never writes ACDB/cal or any DSP state.
-    bool fallback;
-    // Stream attenuation from `volume_db` in the QEM state file. The app still
-    // publishes it and it is still parsed and dumped, but nothing consumes it.
-    double volumeDb;
-    // The snapshot generation the chain was last rebuilt from. The mixer thread
-    // rebuilds only when the watcher publishes a newer one.
-    uint64_t appliedGeneration;
-    // False once a SET_CONFIG has replaced the stream; the next apply then
-    // rebuilds the whole chain. While it holds, an apply may only rebuild the
-    // user EQ, so the limiters keep their state across a live curve update.
-    bool streamConfigured;
-    // Owns the only thread that touches the QEM state file. The mixer thread
-    // reads a published snapshot and takes no filesystem call.
-    DiracBiquadConfigWatcher configWatcher;
-
-    // Built from the stream configuration; ready only for the sample formats
-    // the filter curve implements.
-    DiracBiquadFilter filter;
-    bool filterReady;
-
-    effect_config_t config;
-} dirac_biquad_object_t;
-
-typedef struct dirac_biquad_module_s {
-    const struct effect_interface_s *itfe;
-    dirac_biquad_object_t context;
-} dirac_biquad_module_t;
-
-// Effect control interface
-static int32_t DiracBiquad_Process(effect_handle_t self,
-                                 audio_buffer_t *inBuffer,
-                                 audio_buffer_t *outBuffer);
-static int32_t DiracBiquad_Command(effect_handle_t self,
-                                 uint32_t cmdCode,
-                                 uint32_t cmdSize,
-                                 void *pCmdData,
-                                 uint32_t *replySize,
-                                 void *pReplyData);
-static int32_t DiracBiquad_GetDescriptor(effect_handle_t self,
-                                       effect_descriptor_t *pDescriptor);
-
-// Effect library interface
-static int32_t DiracBiquadLib_Create(const effect_uuid_t *uuid,
-                                   int32_t sessionId,
-                                   int32_t ioId,
-                                   effect_handle_t *pHandle);
+static int32_t DiracBiquadLib_Create(const effect_uuid_t *uuid, int32_t sessionId, int32_t ioId,
+                                     effect_handle_t *pHandle);
 static int32_t DiracBiquadLib_Release(effect_handle_t handle);
 static int32_t DiracBiquadLib_GetDescriptor(const effect_uuid_t *uuid,
-                                          effect_descriptor_t *pDescriptor);
-
-static int DiracBiquad_Init(dirac_biquad_module_t *module);
-static int DiracBiquad_Configure(dirac_biquad_module_t *module, const effect_config_t *config);
-static void DiracBiquad_Reset(dirac_biquad_object_t *context);
-static void DiracBiquad_ApplySnapshot(dirac_biquad_object_t *context, bool force);
+                                            effect_descriptor_t *pDescriptor);
 
 static const struct effect_interface_s gDiracBiquadInterface = {
         DiracBiquad_Process,
         DiracBiquad_Command,
         DiracBiquad_GetDescriptor,
-        nullptr, // no reverse stream
+        nullptr,  // no reverse stream
 };
 
 // This is the only symbol the effects HAL loads.
@@ -160,12 +119,12 @@ audio_effect_library_t AUDIO_EFFECT_LIBRARY_INFO_SYM = {
 };
 
 static const effect_descriptor_t gDiracBiquadDescriptor = {
-        kDiracBiquadUuid, // type
-        kDiracBiquadUuid, // uuid
+        kDiracBiquadUuid,  // type
+        kDiracBiquadUuid,  // uuid
         EFFECT_CONTROL_API_VERSION,
         EFFECT_FLAG_TYPE_INSERT | EFFECT_FLAG_INSERT_LAST | EFFECT_FLAG_DEVICE_IND,
-        0, // cpu load
-        0, // memory usage
+        0,  // cpu load
+        0,  // memory usage
         "Dirac Biquad Filter",
         "The LineageOS Project",
 };
@@ -176,109 +135,25 @@ static const effect_descriptor_t *const gDescriptors[] = {
 
 static const size_t kNbEffects = sizeof(gDescriptors) / sizeof(gDescriptors[0]);
 
-static size_t DiracBiquad_BytesPerSample(audio_format_t format) {
-    return audio_bytes_per_sample(format);
-}
-
-// AudioFlinger does not copy the input buffer into the output buffer for an
-// effect that implements process(), so an effect that does not modify the
-// stream still has to produce the output itself.
-static void DiracBiquad_PassThrough(const dirac_biquad_object_t *context,
-                                  audio_buffer_t *inBuffer,
-                                  audio_buffer_t *outBuffer) {
-    if (inBuffer->raw == outBuffer->raw) {
-        return;
-    }
-
-    const size_t sampleCount = outBuffer->frameCount *
-            audio_channel_count_from_out_mask(context->config.inputCfg.channels);
-    const audio_format_t format =
-            static_cast<audio_format_t>(context->config.inputCfg.format);
-
-    if (context->config.outputCfg.accessMode != EFFECT_BUFFER_ACCESS_ACCUMULATE) {
-        memcpy(outBuffer->raw, inBuffer->raw, sampleCount * DiracBiquad_BytesPerSample(format));
-        return;
-    }
-
-    switch (format) {
-        case AUDIO_FORMAT_PCM_FLOAT:
-            for (size_t i = 0; i < sampleCount; i++) {
-                outBuffer->f32[i] += inBuffer->f32[i];
-            }
-            break;
-        case AUDIO_FORMAT_PCM_16_BIT:
-            for (size_t i = 0; i < sampleCount; i++) {
-                outBuffer->s16[i] = (int16_t)(outBuffer->s16[i] + inBuffer->s16[i]);
-            }
-            break;
-        default:
-            // Accumulation for an unsupported format would corrupt the stream,
-            // so leave the output untouched rather than guess.
-            ALOGW("%s: cannot accumulate format %#x", __func__, format);
-            break;
-    }
-}
-
-// The wired speaker and headset outputs are voiced by the ADSP Dirac topology
-// (ACDB devices 15 and 10), so the host fallback stays out of them. Everything
-// else bypasses the ADM and is ours: Bluetooth A2DP, the remote submix that
-// Android Auto and other projection consumers use, USB, and the rest. The
-// device value is the OR of every patch sink, so the test is a mask.
-static bool DiracBiquad_IsDspOutput(audio_devices_t device) {
-    return (device & (AUDIO_DEVICE_OUT_SPEAKER | AUDIO_DEVICE_OUT_WIRED_HEADSET |
-                      AUDIO_DEVICE_OUT_WIRED_HEADPHONE | AUDIO_DEVICE_OUT_LINE)) != 0;
-}
-
-static int32_t DiracBiquad_Process(effect_handle_t self,
-                                 audio_buffer_t *inBuffer,
-                                 audio_buffer_t *outBuffer) {
+static int32_t DiracBiquad_Process(effect_handle_t self, audio_buffer_t *inBuffer,
+                                   audio_buffer_t *outBuffer) {
     dirac_biquad_module_t *module = reinterpret_cast<dirac_biquad_module_t *>(self);
-
-    if (module == nullptr || module->context.state == DIRAC_BIQUAD_STATE_UNINITIALIZED) {
+    if (module == nullptr || !module->effect.Initialized()) {
         return -EINVAL;
     }
     if (inBuffer == nullptr || inBuffer->raw == nullptr || outBuffer == nullptr ||
         outBuffer->raw == nullptr || inBuffer->frameCount != outBuffer->frameCount) {
         return -EINVAL;
     }
-
-    dirac_biquad_object_t *context = &module->context;
-
-    // Apply whatever the watcher has published. Reading the snapshot is
-    // lock-free, so the audio deadline never takes a filesystem call; a switch
-    // toggle still flips the fallback without a restart.
-    DiracBiquad_ApplySnapshot(context, /*force=*/false);
-
-    // The device is read on every call rather than only when the command
-    // arrives, so a device switch mid-stream takes effect on the next buffer.
-    if (!context->enabled || !context->diracEnabled || !context->fallback ||
-        DiracBiquad_IsDspOutput(context->device) || !context->filterReady) {
-        DiracBiquad_PassThrough(context, inBuffer, outBuffer);
-        return 0;
-    }
-
-    context->filter.Process(
-            inBuffer->raw, outBuffer->raw, outBuffer->frameCount,
-            static_cast<unsigned>(
-                    audio_channel_count_from_out_mask(context->config.inputCfg.channels)),
-            static_cast<audio_format_t>(context->config.inputCfg.format),
-            context->config.outputCfg.accessMode == EFFECT_BUFFER_ACCESS_ACCUMULATE);
-    return 0;
+    return module->effect.Process(inBuffer, outBuffer);
 }
 
-static int32_t DiracBiquad_Command(effect_handle_t self,
-                                 uint32_t cmdCode,
-                                 uint32_t cmdSize,
-                                 void *pCmdData,
-                                 uint32_t *replySize,
-                                 void *pReplyData) {
+static int32_t DiracBiquad_Command(effect_handle_t self, uint32_t cmdCode, uint32_t cmdSize,
+                                   void *pCmdData, uint32_t *replySize, void *pReplyData) {
     dirac_biquad_module_t *module = reinterpret_cast<dirac_biquad_module_t *>(self);
-
-    if (module == nullptr || module->context.state == DIRAC_BIQUAD_STATE_UNINITIALIZED) {
+    if (module == nullptr || !module->effect.Initialized()) {
         return -EINVAL;
     }
-
-    dirac_biquad_object_t *context = &module->context;
 
     ALOGV("%s: command %u cmdSize %u", __func__, cmdCode, cmdSize);
 
@@ -287,16 +162,17 @@ static int32_t DiracBiquad_Command(effect_handle_t self,
             if (pReplyData == nullptr || replySize == nullptr || *replySize != sizeof(int)) {
                 return -EINVAL;
             }
-            *reinterpret_cast<int *>(pReplyData) = DiracBiquad_Init(module);
+            *reinterpret_cast<int *>(pReplyData) = module->effect.Init();
             break;
 
         case EFFECT_CMD_SET_CONFIG:
-            if (pCmdData == nullptr || cmdSize != sizeof(effect_config_t) || pReplyData == nullptr ||
-                replySize == nullptr || *replySize != sizeof(int)) {
+            if (pCmdData == nullptr || cmdSize != sizeof(effect_config_t) ||
+                pReplyData == nullptr || replySize == nullptr ||
+                *replySize != sizeof(int)) {
                 return -EINVAL;
             }
             *reinterpret_cast<int *>(pReplyData) =
-                    DiracBiquad_Configure(module, reinterpret_cast<effect_config_t *>(pCmdData));
+                    module->effect.Configure(*reinterpret_cast<effect_config_t *>(pCmdData));
             break;
 
         case EFFECT_CMD_GET_CONFIG:
@@ -304,11 +180,11 @@ static int32_t DiracBiquad_Command(effect_handle_t self,
                 *replySize != sizeof(effect_config_t)) {
                 return -EINVAL;
             }
-            memcpy(pReplyData, &context->config, sizeof(effect_config_t));
+            memcpy(pReplyData, &module->effect.Config(), sizeof(effect_config_t));
             break;
 
         case EFFECT_CMD_RESET:
-            DiracBiquad_Reset(context);
+            module->effect.Reset();
             break;
 
         case EFFECT_CMD_ENABLE:
@@ -316,44 +192,30 @@ static int32_t DiracBiquad_Command(effect_handle_t self,
             if (pReplyData == nullptr || replySize == nullptr || *replySize != sizeof(int)) {
                 return -EINVAL;
             }
-            context->enabled = cmdCode == EFFECT_CMD_ENABLE;
-            context->state = DIRAC_BIQUAD_STATE_ACTIVE;
-            // Pick up a toggle made while the effect was disabled.
-            context->configWatcher.RequestReload();
-            DiracBiquad_ApplySnapshot(context, /*force=*/true);
+            module->effect.SetEnabled(cmdCode == EFFECT_CMD_ENABLE);
             *reinterpret_cast<int *>(pReplyData) = 0;
             break;
 
         case EFFECT_CMD_SET_DEVICE:
-        case EFFECT_CMD_SET_INPUT_DEVICE:
             if (pCmdData == nullptr || cmdSize != sizeof(uint32_t)) {
                 return -EINVAL;
             }
-            context->device = static_cast<audio_devices_t>(*reinterpret_cast<uint32_t *>(pCmdData));
-            ALOGV("%s: device %#x", __func__, context->device);
-            // Re-read the QEM parity state on every device change so a host
-            // transition picks up the current app setting.
-            context->configWatcher.RequestReload();
-            DiracBiquad_ApplySnapshot(context, /*force=*/true);
+            module->effect.SetDevice(
+                    static_cast<audio_devices_t>(*reinterpret_cast<uint32_t *>(pCmdData)));
+            break;
+
+        case EFFECT_CMD_SET_INPUT_DEVICE:
+            // The input device carries AUDIO_DEVICE_BIT_IN, and folding it into
+            // the device this effect gates on would make an input look like an
+            // output. The host chain gates on the output route alone, so this is
+            // accepted and ignored.
             break;
 
         case EFFECT_CMD_DUMP: {
             if (pCmdData == nullptr || cmdSize != sizeof(uint32_t)) {
                 return -EINVAL;
             }
-            const int fd = static_cast<int>(*reinterpret_cast<uint32_t *>(pCmdData));
-            dprintf(fd, "Dirac Biquad Filter: state %u enabled %d dirac %d fallback %d"
-                    " device %#x dsp %d volume_db=%.1f gains=%d;%d;%d;%d;%d;%d;%d"
-                    " level_stage_db %.1f/%.1f peak_stage_db %.1f/%.1f\n",
-                    context->state, context->enabled, context->diracEnabled, context->fallback,
-                    context->device, DiracBiquad_IsDspOutput(context->device),
-                    context->volumeDb, context->gainsHalfDb[0], context->gainsHalfDb[1],
-                    context->gainsHalfDb[2], context->gainsHalfDb[3], context->gainsHalfDb[4],
-                    context->gainsHalfDb[5], context->gainsHalfDb[6],
-                    static_cast<double>(DiracBiquadFilter::LevelStage().thresholdDb),
-                    static_cast<double>(DiracBiquadFilter::LevelStage().maxAttenuationDb),
-                    static_cast<double>(DiracBiquadFilter::PeakStage().thresholdDb),
-                    static_cast<double>(DiracBiquadFilter::PeakStage().maxAttenuationDb));
+            module->effect.Dump(static_cast<int>(*reinterpret_cast<uint32_t *>(pCmdData)));
             break;
         }
 
@@ -372,8 +234,9 @@ static int32_t DiracBiquad_Command(effect_handle_t self,
         }
 
         case EFFECT_CMD_SET_PARAM:
-            if (pCmdData == nullptr || cmdSize != sizeof(effect_param_t) || pReplyData == nullptr ||
-                replySize == nullptr || *replySize != sizeof(int)) {
+            if (pCmdData == nullptr || cmdSize != sizeof(effect_param_t) ||
+                pReplyData == nullptr || replySize == nullptr ||
+                *replySize != sizeof(int)) {
                 return -EINVAL;
             }
             *reinterpret_cast<int *>(pReplyData) = -EINVAL;
@@ -388,20 +251,17 @@ static int32_t DiracBiquad_Command(effect_handle_t self,
 }
 
 static int32_t DiracBiquad_GetDescriptor(effect_handle_t self,
-                                       effect_descriptor_t *pDescriptor) {
+                                         effect_descriptor_t *pDescriptor) {
     dirac_biquad_module_t *module = reinterpret_cast<dirac_biquad_module_t *>(self);
-    if (module == nullptr || pDescriptor == nullptr ||
-        module->context.state == DIRAC_BIQUAD_STATE_UNINITIALIZED) {
+    if (module == nullptr || pDescriptor == nullptr || !module->effect.Initialized()) {
         return -EINVAL;
     }
     memcpy(pDescriptor, &gDiracBiquadDescriptor, sizeof(effect_descriptor_t));
     return 0;
 }
 
-static int32_t DiracBiquadLib_Create(const effect_uuid_t *uuid,
-                                   int32_t /* sessionId */,
-                                   int32_t /* ioId */,
-                                   effect_handle_t *pHandle) {
+static int32_t DiracBiquadLib_Create(const effect_uuid_t *uuid, int32_t /* sessionId */,
+                                     int32_t /* ioId */, effect_handle_t *pHandle) {
     if (pHandle == nullptr || uuid == nullptr) {
         return -EINVAL;
     }
@@ -416,10 +276,17 @@ static int32_t DiracBiquadLib_Create(const effect_uuid_t *uuid,
         return -ENOENT;
     }
 
-    dirac_biquad_module_t *module = new dirac_biquad_module_t{};
+    // The module is built without exceptions, so a failed operator new would
+    // reach std::terminate and take the effects HAL down with it; the module is
+    // the only allocation, and a create that cannot have it reports so.
+    dirac_biquad_module_t *module = new (std::nothrow) dirac_biquad_module_t{};
+    if (module == nullptr) {
+        return -ENOMEM;
+    }
+
     module->itfe = &gDiracBiquadInterface;
 
-    const int ret = DiracBiquad_Init(module);
+    const int ret = module->effect.Init();
     if (ret < 0) {
         delete module;
         return ret;
@@ -434,14 +301,13 @@ static int32_t DiracBiquadLib_Release(effect_handle_t handle) {
     if (module == nullptr) {
         return -EINVAL;
     }
-    module->context.state = DIRAC_BIQUAD_STATE_UNINITIALIZED;
-    module->context.configWatcher.Stop();
+    module->effect.Shutdown();
     delete module;
     return 0;
 }
 
 static int32_t DiracBiquadLib_GetDescriptor(const effect_uuid_t *uuid,
-                                          effect_descriptor_t *pDescriptor) {
+                                            effect_descriptor_t *pDescriptor) {
     if (uuid == nullptr || pDescriptor == nullptr) {
         return -EINVAL;
     }
@@ -452,123 +318,4 @@ static int32_t DiracBiquadLib_GetDescriptor(const effect_uuid_t *uuid,
         }
     }
     return -EINVAL;
-}
-
-static void DiracBiquad_ApplySnapshot(dirac_biquad_object_t *context, bool force) {
-    if (!context->configured) {
-        return;
-    }
-
-    DiracBiquadConfigSnapshot snapshot;
-    const bool haveSnapshot = context->configWatcher.Read(&snapshot);
-    bool gainsChanged = false;
-    if (haveSnapshot) {
-        if (!force && snapshot.generation == context->appliedGeneration) {
-            return;
-        }
-        gainsChanged = memcmp(snapshot.gainsHalfDb, context->gainsHalfDb,
-                              sizeof(context->gainsHalfDb)) != 0;
-        context->appliedGeneration = snapshot.generation;
-        memcpy(context->gainsHalfDb, snapshot.gainsHalfDb, sizeof(context->gainsHalfDb));
-        context->diracEnabled = snapshot.diracEnabled;
-        context->fallback = snapshot.fallback;
-        context->volumeDb = snapshot.volumeDb;
-    } else if (!force) {
-        // The watcher was copying a publication at the same instant; keep the
-        // state already applied and pick it up on the next call.
-        return;
-    }
-    // A forced apply with no snapshot in flight keeps the gains already applied;
-    // the watcher's requested reload lands within the poll window.
-
-    const audio_format_t format =
-            static_cast<audio_format_t>(context->config.inputCfg.format);
-    if (format != AUDIO_FORMAT_PCM_FLOAT && format != AUDIO_FORMAT_PCM_16_BIT) {
-        context->filterReady = false;
-        context->streamConfigured = false;
-        return;
-    }
-
-    const unsigned channelCount = static_cast<unsigned>(
-            audio_channel_count_from_out_mask(context->config.inputCfg.channels));
-
-    // A stream change rebuilds the whole chain: coefficients, signature and both
-    // limiter stages. Every other apply may rebuild only the user EQ sections,
-    // which leaves the limiter's ring, write index, true-peak history, bound
-    // maxima, envelope and gain in place, so a live curve update does not flush
-    // the look-ahead ring and cut an ~8 ms hole in the stream.
-    if (!context->streamConfigured) {
-        context->filterReady =
-                context->filter.Configure(context->config.inputCfg.samplingRate,
-                                          channelCount, context->gainsHalfDb);
-        context->streamConfigured = context->filterReady;
-    } else if (gainsChanged) {
-        context->filterReady = context->filter.UpdateGains(context->gainsHalfDb);
-    }
-    ALOGV("%s: dirac %d fallback %d volume_db %.1f gains %d;%d;%d;%d;%d;%d;%d", __func__,
-          context->diracEnabled, context->fallback, context->volumeDb,
-          context->gainsHalfDb[0], context->gainsHalfDb[1], context->gainsHalfDb[2],
-          context->gainsHalfDb[3], context->gainsHalfDb[4], context->gainsHalfDb[5],
-          context->gainsHalfDb[6]);
-}
-
-static int DiracBiquad_Init(dirac_biquad_module_t *module) {
-    module->context.state = DIRAC_BIQUAD_STATE_INITIALIZED;
-    module->context.configured = false;
-    module->context.enabled = false;
-    module->context.fallback = false;
-    module->context.device = AUDIO_DEVICE_NONE;
-    module->context.filterReady = false;
-    module->context.appliedGeneration = 0;
-    module->context.streamConfigured = false;
-    DiracBiquadConfig::Fallback(module->context.gainsHalfDb, &module->context.diracEnabled,
-                              &module->context.fallback, &module->context.volumeDb);
-    module->context.configWatcher.Start();
-
-    // INIT is a full (re)initialisation, so the configuration is cleared here;
-    // EFFECT_CMD_RESET must not clear it (see DiracBiquad_Reset).
-    memset(&module->context.config, 0, sizeof(effect_config_t));
-
-    DiracBiquad_Reset(&module->context);
-    return 0;
-}
-
-static int DiracBiquad_Configure(dirac_biquad_module_t *module, const effect_config_t *config) {
-    dirac_biquad_object_t *context = &module->context;
-
-    if (config->inputCfg.samplingRate != config->outputCfg.samplingRate ||
-        config->inputCfg.channels != config->outputCfg.channels ||
-        config->inputCfg.format != config->outputCfg.format) {
-        return -EINVAL;
-    }
-    if (!audio_is_linear_pcm(static_cast<audio_format_t>(config->inputCfg.format))) {
-        return -EINVAL;
-    }
-
-    memcpy(&context->config, config, sizeof(effect_config_t));
-    context->configured = true;
-    context->state = DIRAC_BIQUAD_STATE_INITIALIZED;
-
-    // The stream configuration changed, so the next apply must rebuild the
-    // whole chain rather than just the user EQ sections.
-    context->streamConfigured = false;
-
-    // Re-read the QEM parity state on every configure. The rate also sets the
-    // watcher's poll window, and the request is serviced within it.
-    context->configWatcher.SetSampleRate(config->inputCfg.samplingRate);
-    context->configWatcher.RequestReload();
-    DiracBiquad_ApplySnapshot(context, /*force=*/true);
-
-    return 0;
-}
-
-static void DiracBiquad_Reset(dirac_biquad_object_t *context) {
-    // AOSP EFFECT_CMD_RESET contract (system/media/audio/include/system/
-    // audio_effect.h): "Reset the effect engine. Keep configuration but resets
-    // state and buffer content." AudioFlinger's disable/enable path sends RESET
-    // and then only ENABLE; it re-sends SET_CONFIG solely on addEffect and
-    // removeEffect. Dropping the configuration here therefore left the effect a
-    // pass-through for the rest of the stream's life. Only the running filter
-    // state is cleared: the biquad memories and the limiter's look-ahead ring.
-    context->filter.Reset();
 }
