@@ -323,80 +323,92 @@ void DiracBandShaper::BeginFrame() {
     }
 }
 
-float DiracBandShaper::ProcessSample(float x, unsigned channel) {
+void DiracBandShaper::ProcessFrame(float *frame, unsigned channels) {
     // A non-finite value would persist in the law's memories and in the
     // sections' states, exactly as it would in the chain's own sections.
-    if (!std::isfinite(x)) {
-        x = 0.0f;
+    for (unsigned ch = 0; ch < channels; ++ch) {
+        if (!std::isfinite(frame[ch])) {
+            frame[ch] = 0.0f;
+        }
     }
-    if (!configured_ || channel >= channelCount_) {
-        return x;
+    if (!configured_) {
+        return;
     }
+    const unsigned count = channels < channelCount_ ? channels : channelCount_;
 
-    // The law's own output is its gain applied to the whole signal, and it is
-    // exactly what the stage emits while no plan is in force: with no plan and no
-    // weight left to fade, not one further operation touches the sample.
-    const float lawOutput = law_.ProcessSample(x, channel);
+    // Every channel's law runs before any section does, so the engagement can be
+    // read from the whole frame. The law's own output is exactly what the stage
+    // emits while no plan is in force.
+    float x[kMaxChannels];
+    float gain[kMaxChannels];
+    float linked = 1.0f;
+    for (unsigned ch = 0; ch < count; ++ch) {
+        x[ch] = frame[ch];
+        frame[ch] = law_.ProcessSample(x[ch], ch);
+        gain[ch] = law_.Gain(ch);
+        if (gain[ch] < linked) {
+            linked = gain[ch];
+        }
+    }
     if (!adopted_.valid && planWeight_ <= 0.0f) {
-        return lawOutput;
+        return;
     }
 
-    // With a plan in force the law's gain is not applied directly: the law
-    // decides how hard the plan is engaged, and the plan decides the shape. The
-    // broadband gain in force is the plan's flat gain, faded in, or the law's own
-    // gain where the law asks for more attenuation than the flat gain carries;
-    // the plan's weight then blends the whole contribution against the law, so
-    // adopting and dropping a plan are both continuous.
-    const float gain = law_.Gain(channel);
-    const float flat = gain > flatCurrent_ ? gain : flatCurrent_;
-    float y = x * (gain + planWeight_ * (flat - gain));
+    // The broadband gain the plan's weight blends against stays each channel's
+    // own: it is the recovered law, and a real gain moves no phase.
+    for (unsigned ch = 0; ch < count; ++ch) {
+        const float flat = gain[ch] > flatCurrent_ ? gain[ch] : flatCurrent_;
+        frame[ch] = x[ch] * (gain[ch] + planWeight_ * (flat - gain[ch]));
+    }
 
-    // Every slot is visited, not only the ones the adopted plan names, so a slot
-    // the new plan retired keeps fading through its own reach instead of
-    // vanishing in one sample.
+    // A section's engagement is one value per frame, from the deepest attenuation
+    // any channel's law asks for. Engaged per channel, two channels of one source
+    // would run different blends of the same cut - a different phase and in-band
+    // level per channel, modulated by the law's envelope - and a channel whose law
+    // sat idle would hold its coefficient ramp frozen. Linked, every channel runs
+    // the same filter, its filters start together and its ramps advance together;
+    // with one channel the link is that channel's own law, so the mono result is
+    // unchanged.
     for (Section &section : sections_) {
         if (!section.active) {
             continue;
         }
-        if (section.reach <= 0.0f) {
-            section.running[channel] = false;
-            continue;
-        }
-
-        // The engagement the law asks for, held at this section's own depth: at
-        // the law's floor a section designed at the law's floor is exactly its own
-        // cut, and the flat gain in front of it is the plan's static trim, so the
-        // two add into the depth the magnitude limit needs.
-        float alpha = 1.0f;
-        if (section.depth > 0.0) {
-            alpha = static_cast<float>((1.0 - gain) * section.depthReciprocal);
-            if (alpha > 1.0f) {
-                alpha = 1.0f;
+        float alpha = 0.0f;
+        if (section.reach > 0.0f) {
+            alpha = 1.0f;
+            if (section.depth > 0.0) {
+                alpha = static_cast<float>((1.0 - linked) * section.depthReciprocal);
+                if (alpha > 1.0f) {
+                    alpha = 1.0f;
+                }
+                if (alpha < 0.0f) {
+                    alpha = 0.0f;
+                }
             }
-            if (alpha < 0.0f) {
-                alpha = 0.0f;
-            }
+            alpha *= section.reach;
         }
-        alpha *= section.reach;
         if (alpha <= 0.0f) {
-            section.running[channel] = false;
+            for (unsigned ch = 0; ch < count; ++ch) {
+                section.running[ch] = false;
+            }
             continue;
         }
 
         // A section that is starting to apply runs its filters from cleared
         // state: the state left behind by an earlier engagement is stale, and
         // replaying it would step the output by whatever it had decayed to.
-        if (!section.running[channel]) {
-            for (unsigned stage = 0; stage < section.stageCount; ++stage) {
-                section.stage[channel][stage].Reset();
+        for (unsigned ch = 0; ch < count; ++ch) {
+            if (!section.running[ch]) {
+                for (unsigned stage = 0; stage < section.stageCount; ++stage) {
+                    section.stage[ch][stage].Reset();
+                }
+                section.running[ch] = true;
             }
-            section.running[channel] = true;
+            float cut = frame[ch];
+            for (unsigned stage = 0; stage < section.stageCount; ++stage) {
+                cut = section.stage[ch][stage].ProcessSample(cut);
+            }
+            frame[ch] += alpha * (cut - frame[ch]);
         }
-        float cut = y;
-        for (unsigned stage = 0; stage < section.stageCount; ++stage) {
-            cut = section.stage[channel][stage].ProcessSample(cut);
-        }
-        y += alpha * (cut - y);
     }
-    return y;
 }
