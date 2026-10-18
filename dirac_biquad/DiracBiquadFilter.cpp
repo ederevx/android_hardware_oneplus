@@ -365,9 +365,9 @@ void DiracBiquadFilter::ProcessFrames(const typename F::Sample *in, typename F::
             staged[ch] = ProcessSample(x, ch);
         }
         bandShaper_.BeginFrame();
+        bandShaper_.ProcessFrame(staged, channelCount);
         for (unsigned ch = 0; ch < channelCount; ++ch) {
-            float y = bandShaper_.ProcessSample(staged[ch], ch);
-            y = peakLimiter_.ProcessSample(y, ch);
+            const float y = peakLimiter_.ProcessSample(staged[ch], ch);
             const float d = dry[ch];
             F::Store(&out[base + ch], wet >= 1.0f ? y : d + wet * (y - d), accumulate);
         }

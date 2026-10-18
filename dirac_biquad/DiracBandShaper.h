@@ -41,8 +41,14 @@
 // needs. The plan's flat gain sits in front of the sections and the law's gain
 // drives their engagement, so what a section reaches in band is the law's ask
 // scaled by the section's own design - and the law's 9 dB cap bounds each
-// actuator rather than their sum. Both consequences belong in the review: a band
-// the plan cuts can be attenuated by dB(flat) + dB(cap), and while the law sits
+// actuator rather than their sum. `g` here is the frame's linked gain, the
+// deepest attenuation any channel's law asks for, because a section blends the
+// signal with its own cut and the blend's phase depends on that weight: engaged
+// per channel, two channels of one source would run different filters and a
+// correlated centre would lose its phase between them. The broadband gain in
+// front of the sections remains each channel's own law gain, which moves no
+// phase. Both consequences belong in the review: a band the plan cuts can be
+// attenuated by dB(flat) + dB(cap), and while the law sits
 // between idle and the flat gain a section's centre gets the law's ask twice in
 // dB. That is the design position this chain declares, not an accident, because
 // capping the sum leaves every curve whose designed response exceeds +9 dB
@@ -115,11 +121,14 @@ class DiracBandShaper {
     // because the law restarts at gain 1 and there is no step to fade.
     void Reset();
 
-    // One sample of one channel. The caller must call BeginFrame() once before
-    // each frame's channels: the flat gain and the sections' engagement are
-    // advanced there, so without it no section ever engages. DiracBiquadFilter::
-    // Process does this; a direct caller must too.
-    float ProcessSample(float x, unsigned channel);
+    // One frame of `channels` interleaved samples, in place. The caller must call
+    // BeginFrame() first: the flat gain and the sections' engagement are advanced
+    // there, so without it no section ever engages. DiracBiquadFilter::Process
+    // does this; a direct caller must too. Every channel's law runs before any
+    // section does, because the sections' engagement is taken from the deepest
+    // attenuation the whole frame asks for. No allocation, no transcendental, no
+    // syscall.
+    void ProcessFrame(float *frame, unsigned channels);
 
     // Starts one frame: advances the flat gain and every section's engagement by
     // one slew step. The caller calls it once per frame, before the frame's
@@ -174,15 +183,15 @@ class DiracBandShaper {
         unsigned stageCount = 0;
         double capGain = 1.0;  // the linear gain of the designed cut
         // 1 - capGain and its reciprocal, fixed at adoption: the engagement the
-        // law asks for is (1 - g/flat) * depthReciprocal, so no per-sample
+        // law asks for is (1 - g) * depthReciprocal, so no per-sample
         // subtraction or division is needed.
         double depth = 0.0;
         double depthReciprocal = 0.0;
         float reach = 0.0f;    // engagement, slewed from 0 to 1
         float reachTarget = 0.0f;
-        // Whether the filters ran on the previous sample. The level law's gain is
-        // per channel, so a channel at unity gain must not clear another's IIR
-        // state: the flag is per channel too.
+        // Whether the filters ran on the previous sample. The engagement is one
+        // value for the frame, so the flag turns for every channel at once; it
+        // stays per channel because the IIR state itself does.
         bool running[kMaxChannels] = {};
         bool active = false;
         // Whether the adopted plan still names this slot, which is what the
