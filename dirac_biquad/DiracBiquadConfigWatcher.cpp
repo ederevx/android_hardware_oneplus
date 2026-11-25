@@ -24,42 +24,44 @@
 
 #include <atomic>
 #include <chrono>
+#include <memory>
+#include <mutex>
+#include <new>
 
 #include <log/log.h>
 
+#include "DiracBandPlanner.h"
 #include "DiracCurveDesign.h"
 
 namespace {
 
 // The effect is created per music session and released on every stopOutput, so a
 // new watcher starts from the last state any watcher read from the file rather
-// than from the baked preset, and reuses its plan while the key holds. Only the
-// non-audio threads touch it: a helper writes it after a real read, and a
-// constructor reads it.
+// than from the baked preset, and reuses its plan while the key holds.
 struct SeedState {
     bool valid = false;
     DiracBiquadConfigSnapshot snapshot;
 };
 
-DiracGuardedValue<SeedState> gSeed;
+// Only non-audio threads touch the seed - a helper writes it after a real read, a
+// constructor reads it - so it is held by a mutex rather than the audio path's
+// try-guard: a constructor that meets a writer mid-copy blocks instead of
+// spinning against a helper that may have been preempted holding the guard.
+std::mutex gSeedMutex;
+SeedState gSeed;  // guarded by gSeedMutex
 
 void PublishSeed(const DiracBiquadConfigSnapshot &snapshot) {
-    SeedState state;
-    state.valid = true;
-    state.snapshot = snapshot;
-    gSeed.Write(state);
+    std::lock_guard<std::mutex> lock(gSeedMutex);
+    gSeed.valid = true;
+    gSeed.snapshot = snapshot;
 }
 
-// Spins: only a constructor calls this, never the audio path, and the guard is
-// held only for the struct copy.
 bool ReadSeed(DiracBiquadConfigSnapshot *out) {
-    SeedState state;
-    while (!gSeed.TryRead(&state)) {
-    }
-    if (!state.valid) {
+    std::lock_guard<std::mutex> lock(gSeedMutex);
+    if (!gSeed.valid) {
         return false;
     }
-    *out = state.snapshot;
+    *out = gSeed.snapshot;
     return true;
 }
 
@@ -71,8 +73,10 @@ DiracBiquadConfigWatcher::DiracBiquadConfigWatcher() {
     // The effect is created per session, so start from the last state a real read
     // produced rather than the baked preset. No plan is built here: the create
     // path must not plan, so an unseeded watcher publishes an invalid plan and
-    // the audio side stays in fallback until the helper's first build lands.
-    DiracBiquadConfigSnapshot seed;
+    // the audio side stays in fallback until the helper's first build lands. The
+    // seed starts zeroed, so an unseeded watcher publishes no plan and no bands
+    // rather than whatever the stack held.
+    DiracBiquadConfigSnapshot seed{};
     const bool haveSeed = ReadSeed(&seed);
     if (haveSeed) {
         memcpy(lastGoodGainsHalfDb_, seed.gainsHalfDb, sizeof(lastGoodGainsHalfDb_));
@@ -310,15 +314,29 @@ void DiracBiquadConfigWatcher::PublishOnce(bool force) {
             publishedGeneration_.store(curveOnly.generation, std::memory_order_release);
         }
         // `lastPlan_` is both the destination and the source of the key, and the
-        // key was read above, before the build overwrites it.
-        planner_.Build(rate, gains32, &lastPlan_);
-        if (lastPlan_.valid && !lastPlan_.holdsLimit) {
-            // The plan is applied anyway: it is the best the section budget can
-            // do, its output is still bounded by the peak stage, and reporting the
-            // shortfall is what keeps it from being silent.
-            ALOGW("%s: bend plan does not hold the limit: residual %u, flat %.4f, %u sections",
-                  __func__, lastPlan_.residualIntervals,
-                  static_cast<double>(lastPlan_.flatGain), lastPlan_.sectionCount);
+        // key was read above, before the build overwrites it. The planner is
+        // allocated here, on the helper, for this build alone: never in
+        // create_effect, never on the audio path.
+        std::unique_ptr<DiracBandPlanner> planner(new (std::nothrow) DiracBandPlanner);
+        if (planner == nullptr) {
+            // No plan, but keyed to this rate: a plan with rate 0 would read as a
+            // rate change on every slice and turn the wait into a reload loop. The
+            // invalid plan fails the key, so the next file change or forced reload
+            // retries the build.
+            lastPlan_ = DiracBandPlan{};
+            lastPlan_.sampleRateHz = rate;
+            ALOGW("%s: cannot allocate the bend planner; publishing no plan", __func__);
+        } else {
+            planner->Build(rate, gains32, &lastPlan_);
+            if (lastPlan_.valid && !lastPlan_.holdsLimit) {
+                // The plan is applied anyway: it is the best the section budget
+                // can do, its output is still bounded by the peak stage, and
+                // reporting the shortfall is what keeps it from being silent.
+                ALOGW("%s: bend plan does not hold the limit: residual %u, flat %.4f, %u"
+                      " sections",
+                      __func__, lastPlan_.residualIntervals,
+                      static_cast<double>(lastPlan_.flatGain), lastPlan_.sectionCount);
+            }
         }
     }
     // The rate the plan actually covers: a rate that moved while the build ran
