@@ -77,9 +77,9 @@ class DiracBiquadConfigWatcher {
     // flag at this granularity instead of sleeping a whole interval, so no caller
     // ever has to wake it. Each slice is a timed wait and a wakeup, for the whole
     // session, per live instance, and an instance exists per track, so the slice
-    // is the idle cost: 10 ms is about a hundred wakeups a second against 2 ms's
-    // five hundred, and a request still lands within about a ninth of the 85 ms
-    // interval. A rate change's plan arrives inside the engage fade either way.
+    // is the idle cost: 10 ms is about a hundred wakeups a second, a request still
+    // lands within about a ninth of the 85 ms interval, and a rate change's plan
+    // arrives inside the engage fade.
     static constexpr unsigned kReloadRequestPollMs = 10;
 
     DiracBiquadConfigWatcher();

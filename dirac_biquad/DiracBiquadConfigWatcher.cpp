@@ -72,10 +72,9 @@ DiracBiquadConfigWatcher::DiracBiquadConfigWatcher() {
                                 &lastGoodVolumeDb_);
     // The effect is created per session, so start from the last state a real read
     // produced rather than the baked preset. No plan is built here: the create
-    // path must not plan, so an unseeded watcher publishes an invalid plan and
-    // the audio side stays in fallback until the helper's first build lands. The
-    // seed starts zeroed, so an unseeded watcher publishes no plan and no bands
-    // rather than whatever the stack held.
+    // path must not plan, so an unseeded watcher publishes the zeroed seed's
+    // invalid plan and no bands, and the audio side stays in fallback until the
+    // helper's first build lands.
     DiracBiquadConfigSnapshot seed{};
     const bool haveSeed = ReadSeed(&seed);
     if (haveSeed) {
