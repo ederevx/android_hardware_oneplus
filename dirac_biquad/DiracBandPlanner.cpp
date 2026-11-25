@@ -148,8 +148,8 @@ void DiracBandPlanner::Build(unsigned sampleRateHz,
     // the whole band past what the law may attenuate, the shapes cannot carry
     // what is left, so the flat gain deepens and the plan is rebuilt; it settles
     // in one step for a smooth response and is bounded by the law's own floor.
-    // The first attempt weighs the caller's previous plan; after that the source
-    // is what this build has just produced.
+    // Each attempt rebuilds the sections from this build's own response: nothing
+    // is carried over from a previous plan, so one curve always plans the same way.
     for (unsigned attempt = 0; attempt < kFlatAttempts; ++attempt) {
         // A section is designed no deeper than the law's own floor: that is the
         // deepest attenuation the law can ask for, so a deeper section would never

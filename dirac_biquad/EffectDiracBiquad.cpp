@@ -213,16 +213,28 @@ static int32_t DiracBiquad_Command(effect_handle_t self, uint32_t cmdCode, uint3
         }
 
         case EFFECT_CMD_GET_PARAM: {
-            if (pCmdData == nullptr || replySize == nullptr || pReplyData == nullptr ||
-                cmdSize != sizeof(effect_param_t) || *replySize < sizeof(effect_param_t)) {
+            // This effect has no parameters: every query is answered in band with
+            // status -EINVAL and no value. The reply echoes the request's header
+            // and its parameter, so psize is bounded by both buffers before
+            // anything is copied. AudioFlinger checks the same, but the library is
+            // the ABI's last line, and a direct IEffect client gets no such check.
+            if (pCmdData == nullptr || cmdSize < sizeof(effect_param_t) ||
+                pReplyData == nullptr || replySize == nullptr ||
+                *replySize < sizeof(effect_param_t)) {
                 return -EINVAL;
             }
-            effect_param_t *param = reinterpret_cast<effect_param_t *>(pCmdData);
-            memcpy(pReplyData, pCmdData, sizeof(effect_param_t) + param->psize);
-            param = reinterpret_cast<effect_param_t *>(pReplyData);
+            const uint32_t psize =
+                    reinterpret_cast<const effect_param_t *>(pCmdData)->psize;
+            if (psize > cmdSize - sizeof(effect_param_t) ||
+                psize > *replySize - sizeof(effect_param_t)) {
+                return -EINVAL;
+            }
+            const uint32_t replyBytes = sizeof(effect_param_t) + psize;
+            memcpy(pReplyData, pCmdData, replyBytes);
+            effect_param_t *param = reinterpret_cast<effect_param_t *>(pReplyData);
             param->status = -EINVAL;
-            param->vsize = sizeof(int);
-            *replySize = sizeof(effect_param_t) + sizeof(int);
+            param->vsize = 0;
+            *replySize = replyBytes;
             break;
         }
 

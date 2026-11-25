@@ -32,7 +32,8 @@
 // so the adapter's handle can keep the interface pointer as its first word.
 class DiracBiquadEffect {
   public:
-    // Idempotent.
+    // Re-runnable, but a repeated INIT clears the stream configuration: a
+    // SET_CONFIG must follow before the effect processes again.
     int Init();
 
     // An unchanged rate, channel count and format is a no-op: AudioFlinger

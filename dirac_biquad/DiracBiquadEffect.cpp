@@ -84,6 +84,15 @@ int DiracBiquadEffect::Configure(const effect_config_t &config) {
         // never sees a format it would have to warn about on the audio path.
         return -EINVAL;
     }
+    // A mask with no channel is a stream nothing can be written for: the
+    // pass-through would copy zero samples and leave the output buffer as it was.
+    // Refusing it lets AudioFlinger take its stereo retry. A count above the
+    // filter's kMaxChannels is accepted on purpose: the filter refuses it and the
+    // stream passes through whole, where a refusal here would have AudioFlinger
+    // adapt it to stereo around the effect.
+    if (audio_channel_count_from_out_mask(config.inputCfg.channels) == 0) {
+        return -EINVAL;
+    }
 
     // AudioFlinger re-sends an unchanged configuration to a live effect: twice
     // when the effect is added and again when a neighbour leaves the chain. Only

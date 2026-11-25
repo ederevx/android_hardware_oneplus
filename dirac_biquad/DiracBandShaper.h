@@ -126,8 +126,8 @@ class DiracBandShaper {
     // there, so without it no section ever engages. DiracBiquadFilter::Process
     // does this; a direct caller must too. Every channel's law runs before any
     // section does, because the sections' engagement is taken from the deepest
-    // attenuation the whole frame asks for. No allocation, no transcendental, no
-    // syscall.
+    // attenuation the whole frame asks for. No allocation, no syscall; the law's
+    // own log2 and exp sit at its detector-window boundaries, not on every sample.
     void ProcessFrame(float *frame, unsigned channels);
 
     // Starts one frame: advances the flat gain and every section's engagement by

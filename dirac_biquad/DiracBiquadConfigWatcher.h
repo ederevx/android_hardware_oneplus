@@ -26,7 +26,6 @@
 
 #include "Biquad.h"
 #include "DiracBandPlan.h"
-#include "DiracBandPlanner.h"
 #include "DiracBiquadConfig.h"
 #include "DiracGuardedValue.h"
 
@@ -63,21 +62,25 @@ struct DiracBiquadConfigSnapshot {
 // a reader that loses the race keeps the state it already applied, at worst one
 // poll interval stale.
 //
-// This class also owns the bend planner and the last plan. It turns the conf
-// state and the stream rate into a complete published snapshot, with the plan
-// built on this helper thread before the snapshot is published and outside the
-// publish guard, so the audio path never plans. The helper touches only these
-// members and file-local data, never the effect, the filter or the shaper.
+// This class also runs the bend planner and owns the last plan. It turns the
+// conf state and the stream rate into a complete published snapshot, with the
+// plan built on this helper thread before the snapshot is published and outside
+// the publish guard, so the audio path never plans. The helper touches only
+// these members and file-local data, never the effect, the filter or the shaper.
 class DiracBiquadConfigWatcher {
   public:
     // Frames per poll: 4096 * 1000 / rate ms, so 85 ms at 48 kHz.
     static constexpr unsigned kReloadCheckFrames = 4096;
 
-    // A forced reload (configure, enable or device change) must land well
-    // inside one polling interval. The helper looks at the request flag at this
-    // granularity instead of sleeping a whole interval, so no caller ever has
-    // to wake it and the audio path never takes a futex.
-    static constexpr unsigned kReloadRequestPollMs = 2;
+    // A forced reload (configure, enable or device change) and a rate change
+    // must land well inside one polling interval. The helper looks at the request
+    // flag at this granularity instead of sleeping a whole interval, so no caller
+    // ever has to wake it. Each slice is a timed wait and a wakeup, for the whole
+    // session, per live instance, and an instance exists per track, so the slice
+    // is the idle cost: 10 ms is about a hundred wakeups a second against 2 ms's
+    // five hundred, and a request still lands within about a ninth of the 85 ms
+    // interval. A rate change's plan arrives inside the engage fade either way.
+    static constexpr unsigned kReloadRequestPollMs = 10;
 
     DiracBiquadConfigWatcher();
     ~DiracBiquadConfigWatcher();
@@ -140,11 +143,13 @@ class DiracBiquadConfigWatcher {
     // One writer (the helper), try-readers on the audio path.
     DiracGuardedValue<DiracBiquadConfigSnapshot> published_;
 
-    // The plan builder and the plan last built for it. `lastPlan_` has exactly
-    // one owner, this helper thread, and is rebuilt whenever the rate or the gains
-    // it covers move; `plannedRate_` is the rate the last build actually covered,
-    // so a rate that moved while a build ran is seen and replanned.
-    DiracBandPlanner planner_;
+    // The plan last built. `lastPlan_` has exactly one owner, this helper thread,
+    // and is rebuilt whenever the rate or the gains it covers move; `plannedRate_`
+    // is the rate the last build actually covered, so a rate that moved while a
+    // build ran is seen and replanned. The planner itself is not a member: its
+    // grid scratch is about 125 KiB, a build is a function of the rate and the
+    // gains alone, and the effect is created per session, so PublishOnce allocates
+    // it for the build and a session that keeps the seeded plan never pays for it.
     DiracBandPlan lastPlan_;
     unsigned plannedRate_ = 0;
 
