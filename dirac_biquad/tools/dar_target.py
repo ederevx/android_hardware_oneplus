@@ -20,16 +20,14 @@ payload carries the FIR this module's design fits. This tool decodes it, measure
 recorded design against it, and verifies a generated table against both.
 """
 
-import argparse
+import hashlib
 import json
-import math
 import os
 import re
 import struct
 import sys
 
 import numpy as np
-from scipy.optimize import minimize
 
 DEFAULT_DAR = ("vendor/oneplus/msm8998-common/proprietary/vendor/lib/rfsa/adsp/"
                "dirac_resource.dar")
@@ -206,11 +204,6 @@ def dc_anchor_db(rate, taps):
 
     return float(20.0 * np.log10(magnitude([0.0])[0] / magnitude([1000.0])[0]))
 
-import hashlib
-import json
-import re
-import sys
-
 
 # The accuracy metric the design record and the header both name: the design
 # against the DAR target, on the dense grid, in dB, referenced to 1 kHz.
@@ -307,8 +300,37 @@ def parse_header(path):
     return terms, direct
 
 
+def verify_header(path, dar, channel, record_path):
+    """Check a generated header against the design record it was folded from."""
+    with open(record_path) as handle:
+        record = json.load(handle)
+    with open(dar, "rb") as handle:
+        dar_sha256 = sha256_bytes(handle.read())
+    payload_sha256 = sha256_bytes(container_payload(dar, ENTRY))
+    failures = 0
+    if dar_sha256 != record["target"]["dar_sha256"]:
+        print("dar sha256 %s does not match the record" % dar_sha256)
+        failures += 1
+    if payload_sha256 != record["target"]["entry_payload_sha256"]:
+        print("entry payload sha256 %s does not match the record" % payload_sha256)
+        failures += 1
+
+    terms, direct = parse_header(path)
+    taps_by_rate = fir_taps(dar, channel)
+    for rate in sorted(terms):
+        parallel = parallel_db(rate, direct[rate], terms[rate], frequency_grid())
+        max_db, at_hz = worst_against_target(rate, parallel, taps_by_rate[rate])
+        recorded = float(record["designs"][str(rate)]["measured"]["max_db"])
+        print("%d Hz  %2d terms  max %.6f dB at %d Hz  recorded %.6f"
+              % (rate, len(terms[rate]), max_db, at_hz, recorded))
+        if abs(max_db - recorded) > 1e-6:
+            print("  does not match the recorded maximum")
+            failures += 1
+    return 1 if failures else 0
+
+
 def main(argv):
-    """Usage: dar_target.py [--dar PATH] [--channel NAME] [--measure --design JSON]
+    """Usage: dar_target.py [--dar PATH] [--channel NAME] [--design JSON]
 
     [--verify-header HEADER]. With no mode it prints the target's identity and DC
     anchor, which is how a caller sees which filter is being measured.
@@ -334,20 +356,12 @@ def main(argv):
         update_record(measure_path, dar, channel)
         return 0
 
-    taps_by_rate = fir_taps(dar, channel)
     if header_path is not None:
-        terms, direct = parse_header(header_path)
-        failures = 0
-        for rate in sorted(terms):
-            sections_rows = terms[rate]
-            parallel = parallel_db(rate, direct[rate], sections_rows, frequency_grid())
-            max_db, at_hz = worst_against_target(rate, parallel, taps_by_rate[rate])
-            print("%d Hz  %2d terms  max %.6f dB at %d Hz"
-                  % (rate, len(sections_rows), max_db, at_hz))
-            if not (max_db < 100.0):
-                failures += 1
-        return 1 if failures else 0
+        record_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                   "signature_design.json")
+        return verify_header(header_path, dar, channel, record_path)
 
+    taps_by_rate = fir_taps(dar, channel)
     rates = sorted(taps_by_rate)
     for rate in rates:
         print("%s  %s  %d Hz  %d taps" % (entry, channel, rate, len(taps_by_rate[rate])))
