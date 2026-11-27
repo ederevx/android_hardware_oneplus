@@ -28,8 +28,8 @@
 // term plus one real term per pole, so nothing is cascaded at runtime and no term
 // waits on another. The coefficients come from DiracCurveDesign: the generated
 // doubles at a designed rate, those terms mapped onto any other. The arithmetic
-// here is double for the same reason, and the module builds without contraction
-// so a term evaluates as it was certified.
+// is double so the terms run as generated, and the module builds without
+// contraction so a term evaluates as it was certified.
 class DiracSignatureBank {
   public:
     void Reset();
