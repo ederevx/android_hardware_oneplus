@@ -22,6 +22,7 @@
 
 #include "Biquad.h"
 #include "DiracBandPlan.h"
+#include "DiracCurveDesign.h"
 
 // Builds the bend plan for one stream rate and one set of band gains from the
 // chain's designed response: the worst point still over the magnitude limit
@@ -97,7 +98,7 @@ class DiracBandPlanner {
     // returns its point count clamped to `capacity`.
     size_t FillGrid(BiquadPoint *points, double *magnitude, double *hz, size_t capacity,
                     double pointsPerOctave, double lowOmega, double highOmega, double rateOverPi,
-                    const Biquad *signature, const Biquad *bands);
+                    const DiracSignatureCoefficients &signature, const Biquad *bands);
 
     // The residual excess of the running composite at one plan grid point, and at
     // one check grid point, in dB above the target.

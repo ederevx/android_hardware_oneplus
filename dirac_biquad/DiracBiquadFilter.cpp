@@ -27,7 +27,6 @@
 #endif
 
 #include "Biquad.h"
-#include "DiracBiquadTable.h"
 #include "DiracChainStages.h"
 #include "DiracCurveDesign.h"
 #include "DiracLimiter.h"
@@ -120,9 +119,15 @@ bool DiracBiquadFilter::Configure(unsigned sampleRateHz, unsigned channelCount,
         identityPath_[band] = false;
     }
 
-    for (unsigned ch = 0; ch < channelCount; ++ch) {
-        DiracCurveDesign::Signature(sampleRateHz, signature_[ch]);
+    // The signature is one filter for the rate, realised here rather than on the
+    // audio path, and shared by every channel.
+    DiracSignatureCoefficients signature;
+    if (!DiracCurveDesign::Signature(sampleRateHz, &signature)) {
+        configured_ = false;
+        return false;
     }
+    signature_ = signature;
+
     // The user bands are designed here, on the command thread that reconfigures,
     // rather than on the audio path; a live gain change loads the watcher's own
     // precomputed set instead.
@@ -264,9 +269,7 @@ void DiracBiquadFilter::Reset() {
 }
 
 void DiracBiquadFilter::ResetBiquads(unsigned channel) {
-    for (size_t section = 0; section < kSignatureCount; ++section) {
-        signature_[channel][section].Reset();
-    }
+    signatureBank_[channel].Reset();
     for (size_t band = 0; band < kBandCount; ++band) {
         stages_[channel][band].Reset();
     }
@@ -300,9 +303,7 @@ float DiracBiquadFilter::ProcessSample(float x, unsigned channel) {
         ++nonFiniteFlushes_;
         x = 0.0f;
     }
-    for (size_t section = 0; section < kSignatureCount; ++section) {
-        x = signature_[channel][section].ProcessSample(x);
-    }
+    x = signatureBank_[channel].ProcessSample(signature_, x);
     for (size_t band = 0; band < kBandCount; ++band) {
         x = identityPath_[band] ? stages_[channel][band].ProcessIdentity(x)
                                 : stages_[channel][band].ProcessSample(x);

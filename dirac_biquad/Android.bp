@@ -38,11 +38,11 @@ cc_library_shared {
         "DiracBiquadConfig.cpp",
         "DiracBiquadConfigWatcher.cpp",
         "DiracBiquadEffect.cpp",
-        "DiracBiquadTable.cpp",
         "DiracBiquadFilter.cpp",
         "DiracCurveDesign.cpp",
         "DiracLimiter.cpp",
         "DiracRoute.cpp",
+        "DiracSignatureBank.cpp",
         "EffectDiracBiquad.cpp",
     ],
 

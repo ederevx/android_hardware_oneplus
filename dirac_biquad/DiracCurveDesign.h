@@ -20,13 +20,22 @@
 #include <stddef.h>
 
 #include "Biquad.h"
-#include "DiracBiquadTable.h"
+#include "DiracSignatureTable.h"
+
+// The fixed signature as the chain runs it: a direct term plus one real
+// second-order term per pole, as generated. At a designed rate these are the
+// generated doubles; at any other rate they are those terms mapped onto it.
+struct DiracSignatureCoefficients {
+    double direct = 1.0;
+    size_t termCount = 0;
+    DiracSignatureTerm terms[DiracSignatureTable::kMaxTermCount] = {};
+};
 
 // The chain's designed response: the fixed Dirac signature followed by the seven
 // user EQ bands, built for a stream rate and a set of half-dB band gains.
 //
 // One owner, so the response a plan is read from is the response the chain runs.
-// Stateless: every method is static, the same shape as DiracBiquadTable.
+// Stateless: every method is static, the same shape as the generated table.
 //
 // The band shape is the Dirac equalizer's own model: the app's EqCurveView
 // reduces each band to the small-signal limit of the RBJ peaking response, a
@@ -38,14 +47,14 @@
 class DiracCurveDesign {
   public:
     static constexpr size_t kBandCount = 7;
-    static constexpr size_t kSignatureCount = DiracBiquadTable::kSectionCount;
 
     static constexpr double kBandCenterHz[kBandCount] = {
             68.0, 165.0, 400.0, 972.0, 2000.0, 6000.0, 14000.0};
 
-    // The fixed signature sections for the stream rate, from the per-rate
-    // prototype table, with the corner pre-warped by Biquad::SetPrototype.
-    static void Signature(unsigned sampleRateHz, Biquad out[kSignatureCount]);
+    // The fixed signature for the stream rate, ready for the bank. At a designed
+    // rate these are the generated term doubles unchanged; at any other rate they
+    // are those terms carried onto it. False for a rate the map cannot realise.
+    static bool Signature(unsigned sampleRateHz, DiracSignatureCoefficients *out);
 
     // The seven user EQ sections from the half-dB band gains.
     static void UserBands(unsigned sampleRateHz, const int gainsHalfDb[kBandCount],

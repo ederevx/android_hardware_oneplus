@@ -24,8 +24,9 @@
 #include "Biquad.h"
 #include "DiracBandPlan.h"
 #include "DiracBandShaper.h"
-#include "DiracBiquadTable.h"
+#include "DiracCurveDesign.h"
 #include "DiracLimiter.h"
+#include "DiracSignatureBank.h"
 
 // Host-side biquad curve with Dirac-QEM parity.
 //
@@ -40,9 +41,9 @@
 // Before the user EQ the chain applies one Dirac signature: the FIR magnitude of
 // hdsound slot 8 (usecase/eheadset/hdsound-filters/
 // 09-Oneplus-Earphone_General_Bluetooth_170928v02 in dirac_resource.dar), the
-// OEM earphone voicing. The per-rate design parameters live in DiracBiquadTable,
-// which records the target, objective and measured accuracy; only the FIR
-// magnitude is modelled, not its IIR sections or the module's dynamics.
+// OEM earphone voicing. The design records its target, objective and measured
+// accuracy, and the generated table holds it as the single filter this runs;
+// only the FIR magnitude is modelled, not the module's dynamics.
 //
 // The chain ends in two stages, neither adding gain: the band shaper runs the
 // recovered level law on the low band alone, so the attenuation bends only the
@@ -59,11 +60,6 @@ class DiracBiquadFilter {
     static constexpr size_t kBandCount = 7;
 
     static constexpr unsigned kMaxChannels = 8;
-
-    // Fixed Dirac signature sections. The parameters come from
-    // DiracBiquadTable, which selects them for the stream rate; the
-    // coefficients are rebuilt for that rate in Configure.
-    static constexpr size_t kSignatureCount = DiracBiquadTable::kSectionCount;
 
     // The law the band shaper runs and the peak stage the chain ends in, so a
     // diagnostic can name what bounds the output without restating the
@@ -207,7 +203,10 @@ class DiracBiquadFilter {
     // Count of non-finite input or cascade samples flushed since the last
     // Init, so the effect dump can tell whether the emergency path ran.
     unsigned nonFiniteFlushes_ = 0;
-    Biquad signature_[kMaxChannels][kSignatureCount];
+    // The fixed signature: one coefficient set for the stream rate, and one
+    // state holder per channel.
+    DiracSignatureCoefficients signature_;
+    DiracSignatureBank signatureBank_[kMaxChannels];
     // The gains this filter has actually applied, the other half of the key a
     // bend plan is adopted against.
     int appliedGainsHalfDb_[kBandCount] = {};

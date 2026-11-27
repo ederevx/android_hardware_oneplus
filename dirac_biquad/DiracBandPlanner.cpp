@@ -22,6 +22,7 @@
 
 #include "DiracChainStages.h"
 #include "DiracCurveDesign.h"
+#include "DiracSignatureBank.h"
 
 namespace {
 
@@ -109,9 +110,11 @@ void DiracBandPlanner::Build(unsigned sampleRateHz,
     const double highOmega = std::tan(M_PI * dirac_chain::kBendGridHighFactor);
     const double rateOverPi = static_cast<double>(sampleRateHz) / M_PI;
 
-    Biquad signature[DiracCurveDesign::kSignatureCount];
+    DiracSignatureCoefficients signature;
+    if (!DiracCurveDesign::Signature(sampleRateHz, &signature)) {
+        return;
+    }
     Biquad bands[DiracCurveDesign::kBandCount];
-    DiracCurveDesign::Signature(sampleRateHz, signature);
     DiracCurveDesign::UserBands(sampleRateHz, gainsHalfDb, bands);
 
     gridPoints_ = FillGrid(points_, gridMagnitude_, gridHz_, kMaxGridPoints,
@@ -238,7 +241,8 @@ void DiracBandPlanner::Build(unsigned sampleRateHz,
 
 size_t DiracBandPlanner::FillGrid(BiquadPoint *points, double *magnitude, double *hz,
                                   size_t capacity, double pointsPerOctave, double lowOmega,
-                                  double highOmega, double rateOverPi, const Biquad *signature,
+                                  double highOmega, double rateOverPi,
+                                  const DiracSignatureCoefficients &signature,
                                   const Biquad *bands) {
     // The grid is uniform in Omega and reported in Hz, so its own resolution is
     // the same at every frequency and at every rate.
@@ -251,22 +255,17 @@ size_t DiracBandPlanner::FillGrid(BiquadPoint *points, double *magnitude, double
         pointsCount = 2;
     }
 
-    // The response is the product of every section's own response at the point,
-    // evaluated on the coefficients the chain is designed with, so the plan is
-    // read from what the chain will actually do rather than from a curve it hopes
-    // for. The unit-circle point is computed once per frequency and shared by all
-    // 23 sections.
+    // The response is the signature's own response at the point times every
+    // band's, evaluated on the terms and coefficients the chain runs, so the plan
+    // is read from what the chain will actually do rather than from a curve it
+    // hopes for. The unit-circle point is computed once per frequency.
     for (size_t index = 0; index < pointsCount; ++index) {
         const double fraction =
                 static_cast<double>(index) / static_cast<double>(pointsCount - 1);
         const double omega = lowOmega * std::pow(highOmega / lowOmega, fraction);
         const double frequency = rateOverPi * std::atan(omega);
         const BiquadPoint point = Biquad::PointAt(sampleRateHz_, frequency);
-        double value = 1.0;
-        for (size_t section = 0; section < DiracCurveDesign::kSignatureCount; ++section) {
-            const BiquadResponse response = signature[section].ResponseAt(point);
-            value *= std::hypot(response.real, response.imaginary);
-        }
+        double value = DiracSignatureBank::MagnitudeAt(signature, point);
         for (size_t band = 0; band < DiracCurveDesign::kBandCount; ++band) {
             const BiquadResponse response = bands[band].ResponseAt(point);
             value *= std::hypot(response.real, response.imaginary);

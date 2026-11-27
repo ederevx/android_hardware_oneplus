@@ -69,12 +69,6 @@ class Biquad {
     void SetFilter(BiquadType type, double sampleRateHz, double frequencyHz, double q,
                    double gainDb);
 
-    // `cornerHz` is the corner of an analog prototype.  The bilinear transform
-    // is pre-warped for this rate, so the same arguments realise the same
-    // analog response at every sample rate instead of a rate-specific one.
-    void SetPrototype(BiquadType type, double sampleRateHz, double cornerHz, double q,
-                      double gainDb);
-
     // Realises one second-order stage of an order-n Butterworth shelf cut: the
     // shelf whose edge is `cornerHz` and whose gain at full depth is `gainDb`.
     // Order 2 is one stage; order 4 is two, selected by `stage`, which is the
