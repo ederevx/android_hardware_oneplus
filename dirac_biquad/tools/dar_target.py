@@ -162,37 +162,6 @@ def fir_taps(path, channel="Left"):
     return taps[channel]
 
 
-def target(rate, taps, option=None, low_hz=None, anchor_points_hz=None):
-    """(freq_hz, db) of the FIR, referenced to 1 kHz.
-
-    The shipped grid is 20 Hz - 20 kHz; the DC-anchored refit prepends rows
-    below 20 Hz (option "A": same-density log grid down to `low_hz`; option
-    "B": the f = 0 tap-sum anchor plus `anchor_points_hz`).  The 20 Hz - 20 kHz
-    rows are byte-identical to the shipped grid in both cases.
-    """
-    option = DC_OPTION if option is None else option
-    low_hz = DC_LOW_HZ if low_hz is None else low_hz
-    anchor_points_hz = (DC_ANCHOR_POINTS_HZ if anchor_points_hz is None
-                        else anchor_points_hz)
-    base = 20.0 * (20000.0 / 20.0) ** (np.arange(1201) / 1200.0)
-    parts = []
-    if option == "A" and low_hz < 20.0:
-        n_low = int(round(np.log(20.0 / low_hz) / np.log(20000.0 / 20.0) * 1200))
-        parts.append(low_hz * (20.0 / low_hz) ** (np.arange(n_low) / float(n_low)))
-    if option == "B":
-        parts.append(np.array([0.0] + list(anchor_points_hz), float))
-    freqs = np.concatenate(parts + [base])
-    taps = np.array(taps, float)
-    n = np.arange(len(taps))
-
-    def magnitude(f):
-        f = np.atleast_1d(np.asarray(f, float))
-        return np.abs(np.exp(-2j * np.pi * f[:, None] / rate * n[None, :]) @ taps)
-
-    return freqs, 20.0 * np.log10(magnitude(freqs) + 1e-30) - 20.0 * np.log10(
-        magnitude(1000.0) + 1e-30)
-
-
 def dc_anchor_db(rate, taps):
     """Reference DC gain re 1 kHz: 20*log10(|sum(taps)| / |H(1 kHz)|)."""
     taps = np.array(taps, float)
@@ -287,10 +256,10 @@ def update_record(path, dar, channel):
 
 
 def parse_header(path):
-    """(terms per rate, direct per rate, recorded max_db per rate) from the header."""
+    """(terms per rate, direct per rate) from the header."""
     with open(path) as handle:
         text = handle.read()
-    terms, direct, recorded = {}, {}, {}
+    terms, direct = {}, {}
     for rate, body in re.findall(r"kTerms(\d+)\[\d+\] = \{(.*?)\n\};", text, re.S):
         rows = re.findall(r"\{([^{}]*)\},", body)
         terms[int(rate)] = [[float.fromhex(value.strip()) for value in row.split(",")]
